@@ -8,6 +8,7 @@ inject a ``completer`` instead.
 
 from __future__ import annotations
 
+import base64
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -22,6 +23,11 @@ Completer = Callable[..., Awaitable[Any]]
 def _extract_content(response: Any) -> str:
     content = response["choices"][0]["message"]["content"]
     return str(content) if content is not None else ""
+
+
+def _data_uri(mime: str, data: bytes) -> str:
+    encoded = base64.b64encode(data).decode("ascii")
+    return f"data:{mime or 'application/octet-stream'};base64,{encoded}"
 
 
 def completion_cost(response: Any) -> float:
@@ -62,7 +68,7 @@ class LiteLLMProvider:
 
         return await litellm.acompletion(**kwargs)
 
-    async def generate(self, messages: list[Message], model: str, **opts: object) -> str:
+    async def _run(self, messages: list[Any], model: str, **opts: object) -> str:
         async def call(key: str | None) -> str:
             response = await self._acompletion(
                 model=f"{self.route}/{model}",
@@ -77,3 +83,14 @@ class LiteLLMProvider:
             return _extract_content(response)
 
         return await with_key_rotation(self.pool, call, max_retries=self.max_retries)
+
+    async def generate(self, messages: list[Message], model: str, **opts: object) -> str:
+        return await self._run(list(messages), model, **opts)
+
+    async def generate_with_image(
+        self, prompt: str, images: list[tuple[bytes, str]], model: str, **opts: object
+    ) -> str:
+        content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
+        for data, mime in images:
+            content.append({"type": "image_url", "image_url": {"url": _data_uri(mime, data)}})
+        return await self._run([{"role": "user", "content": content}], model, **opts)

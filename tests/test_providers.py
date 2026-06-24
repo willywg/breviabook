@@ -43,6 +43,22 @@ async def test_openai_compatible_base_url() -> None:
     assert seen["api_base"] == "http://localhost:1234/v1"
 
 
+async def test_generate_with_image_sends_data_uri() -> None:
+    seen: dict[str, Any] = {}
+
+    async def completer(**kwargs: Any) -> dict[str, Any]:
+        seen.update(kwargs)
+        return _response("a diagram")
+
+    provider = OpenAIProvider(KeyPool(["k"]), completer=completer)
+    out = await provider.generate_with_image("describe", [(b"\x89PNG", "image/png")], "gpt-4o")
+    assert out == "a diagram"
+    content = seen["messages"][0]["content"]
+    assert content[0] == {"type": "text", "text": "describe"}
+    assert content[1]["type"] == "image_url"
+    assert content[1]["image_url"]["url"].startswith("data:image/png;base64,")
+
+
 async def test_gemini_and_openrouter_routes() -> None:
     routes: list[str] = []
 

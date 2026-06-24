@@ -16,8 +16,9 @@ from brevia.condense.chunker import Chunker, count_document_tokens
 from brevia.condense.condenser import Condenser
 from brevia.condense.synthesizer import Synthesizer, synthesized_to_document
 from brevia.images.selector import ImageSelector
+from brevia.images.vision_ranker import VisionRanker
 from brevia.ir.models import Document
-from brevia.llm.base import LLMProvider
+from brevia.llm.base import LLMProvider, VisionProvider
 from brevia.llm.usage import Usage
 from brevia.parsers.epub_parser import EpubParser
 from brevia.parsers.pdf_parser import PdfParser, TocEntry
@@ -149,6 +150,7 @@ async def condense_book(
     translate_to: str | None = None,
     source_lang: str | None = None,
     glossary: Glossary | None = None,
+    rank_images: bool = False,
     manual_toc: list[TocEntry] | None = None,
     infer_pages: int = 20,
     log: Log = _noop,
@@ -193,6 +195,15 @@ async def condense_book(
             provider, model, translate_to, source_lang=source_lang, glossary=glossary
         )
         condensed_doc = await translator.translate_document(condensed_doc)
+
+    if rank_images and condensed_doc.images:
+        if not isinstance(provider, VisionProvider):
+            raise ValueError(
+                "--rank-images needs a vision-capable provider/model (e.g. gemini); "
+                f"{getattr(provider, 'name', 'provider')!r} does not support images."
+            )
+        log("Ranking images (vision) …")
+        condensed_doc = await VisionRanker(provider, model).rank(condensed_doc)
 
     selected = ImageSelector().select(condensed_doc)
     final_doc = selected.document

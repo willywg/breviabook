@@ -7,7 +7,8 @@ Phase 9 without porting any third-party provider code.
 
 from __future__ import annotations
 
-from typing import cast
+import base64
+from typing import Any, cast
 
 import litellm
 
@@ -34,6 +35,24 @@ class OllamaProvider:
         response = await litellm.acompletion(
             model=f"ollama/{model}",
             messages=messages,
+            api_base=self.endpoint,
+            **opts,
+        )
+        self.usage.add(*extract_usage(response))
+        content = response["choices"][0]["message"]["content"]
+        return cast(str, content or "")
+
+    async def generate_with_image(
+        self, prompt: str, images: list[tuple[bytes, str]], model: str, **opts: object
+    ) -> str:
+        """Vision completion for a local multimodal model (e.g. qwen3-vl)."""
+        parts: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
+        for data, mime in images:
+            uri = f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"
+            parts.append({"type": "image_url", "image_url": {"url": uri}})
+        response = await litellm.acompletion(
+            model=f"ollama/{model}",
+            messages=[{"role": "user", "content": parts}],
             api_base=self.endpoint,
             **opts,
         )

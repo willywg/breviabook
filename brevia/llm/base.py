@@ -35,3 +35,18 @@ class LLMProvider(Protocol):
     ) -> str:
         """Return the assistant's text completion for ``messages`` using ``model``."""
         ...
+
+
+@runtime_checkable
+class VisionProvider(Protocol):
+    """A provider that can reason over images (for the Phase 11 vision ranker)."""
+
+    async def generate_with_image(
+        self,
+        prompt: str,
+        images: list[tuple[bytes, str]],
+        model: str,
+        **opts: object,
+    ) -> str:
+        """Return a completion for ``prompt`` plus ``images`` (each ``(bytes, mime)``)."""
+        ...

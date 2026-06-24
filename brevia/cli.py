@@ -75,9 +75,6 @@ def condense(
         console.print(f"[red]{exc}[/]")
         raise typer.Exit(code=1) from exc
 
-    if rank_images:
-        console.print("[yellow]--rank-images[/] (vision ranking) arrives in Phase 11; ignoring.")
-
     toc: list[TocEntry] | None = None
     if manual_toc is not None:
         try:
@@ -140,6 +137,7 @@ def condense(
                 translate_to=translate_to,
                 source_lang=source_lang,
                 glossary=glossary_obj,
+                rank_images=rank_images,
                 manual_toc=toc,
                 log=lambda msg: console.print(f"[dim]· {msg}[/]"),
             )

@@ -170,3 +170,41 @@ async def test_translation_end_to_end(tmp_path: Path) -> None:
     text = (tmp_path / "sample-condensed.md").read_text(encoding="utf-8")
     assert "ES" in text  # translated content present
     assert "```" in text  # code fence preserved (untranslated)
+
+
+class VisionRoutingProvider(RoutingProvider):
+    """RoutingProvider that also drops images via vision ranking (score 0)."""
+
+    async def generate_with_image(
+        self, prompt: str, images: list[tuple[bytes, str]], model: str, **opts: object
+    ) -> str:
+        return json.dumps({"score": 0.0, "essential": False})
+
+
+async def test_rank_images_drops_via_vision(tmp_path: Path) -> None:
+    await condense_book(
+        input_path=FIXTURE,
+        out_dir=tmp_path,
+        formats=["md"],
+        provider=VisionRoutingProvider(),
+        model="m",
+        rank_images=True,
+    )
+    # The fixture's only image scores 0 -> dropped -> no images/ dir written.
+    text = (tmp_path / "sample-condensed.md").read_text(encoding="utf-8")
+    assert "![" not in text
+    assert not (tmp_path / "images").exists()
+
+
+async def test_rank_images_requires_vision_provider(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="vision-capable"):
+        await condense_book(
+            input_path=FIXTURE,
+            out_dir=tmp_path,
+            formats=["md"],
+            provider=ScriptedProvider(
+                json.dumps({"texts": {"1": "c"}, "essential_images": ["fig1"]})
+            ),
+            model="m",
+            rank_images=True,
+        )
