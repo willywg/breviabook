@@ -27,6 +27,8 @@ from brevia.render.base import Renderer
 from brevia.render.epub_renderer import EpubRenderer
 from brevia.render.md_renderer import MarkdownRenderer
 from brevia.render.pdf_renderer import PdfRenderer
+from brevia.translate.glossary import Glossary
+from brevia.translate.translator import Translator
 from brevia.utils.tokens import block_tokens
 
 SUPPORTED_FORMATS = ("md", "epub", "pdf")
@@ -145,6 +147,8 @@ async def condense_book(
     resume: bool = False,
     checkpoint_path: Path | None = None,
     translate_to: str | None = None,
+    source_lang: str | None = None,
+    glossary: Glossary | None = None,
     manual_toc: list[TocEntry] | None = None,
     infer_pages: int = 20,
     log: Log = _noop,
@@ -184,7 +188,11 @@ async def condense_book(
     condensed_doc = synthesized_to_document(doc, chapters)
 
     if translate_to:
-        warnings.append(f"--translate-to {translate_to}: translation arrives in Phase 10 (skipped)")
+        log(f"Translating to {translate_to} …")
+        translator = Translator(
+            provider, model, translate_to, source_lang=source_lang, glossary=glossary
+        )
+        condensed_doc = await translator.translate_document(condensed_doc)
 
     selected = ImageSelector().select(condensed_doc)
     final_doc = selected.document

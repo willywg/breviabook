@@ -73,19 +73,6 @@ async def test_unsupported_input_raises(tmp_path: Path) -> None:
         )
 
 
-async def test_translate_to_adds_warning(tmp_path: Path) -> None:
-    result = await condense_book(
-        input_path=FIXTURE,
-        out_dir=tmp_path,
-        formats=["md"],
-        provider=ScriptedProvider(_REPLY),
-        model="m",
-        translate_to="Spanish",
-    )
-    assert any("Phase 10" in w for w in result.warnings)
-    assert (tmp_path / "sample-condensed.md").exists()
-
-
 async def test_resume_skips_provider_for_done_chunks(tmp_path: Path) -> None:
     cp_path = tmp_path / ".brevia" / "sample-condensed.jsonl"
 
@@ -155,3 +142,31 @@ def test_estimate_on_pdf_no_llm() -> None:
     est = estimate_condense(PDF_FIXTURE, chunk_tokens=2000, target_ratio=0.3)
     assert est.chapters == 2
     assert est.input_tokens > 0
+
+
+class RoutingProvider:
+    """Returns a translate reply for translate prompts, else a condense/synth reply."""
+
+    name = "routing"
+
+    async def generate(self, messages: list[Message], model: str, **opts: object) -> str:
+        content = messages[-1]["content"]
+        if '"translations"' in content:
+            return json.dumps({"translations": {str(i): f"ES{i}" for i in range(1, 30)}})
+        return json.dumps(
+            {"texts": {str(i): f"c{i}" for i in range(1, 10)}, "essential_images": []}
+        )
+
+
+async def test_translation_end_to_end(tmp_path: Path) -> None:
+    await condense_book(
+        input_path=FIXTURE,
+        out_dir=tmp_path,
+        formats=["md"],
+        provider=RoutingProvider(),
+        model="m",
+        translate_to="Spanish",
+    )
+    text = (tmp_path / "sample-condensed.md").read_text(encoding="utf-8")
+    assert "ES" in text  # translated content present
+    assert "```" in text  # code fence preserved (untranslated)

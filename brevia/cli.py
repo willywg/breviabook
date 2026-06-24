@@ -20,6 +20,7 @@ from brevia.config import load_settings
 from brevia.llm.factory import get_provider
 from brevia.parsers.pdf_parser import TocEntry, load_manual_toc
 from brevia.pipeline import condense_book, estimate_condense, validate_formats
+from brevia.translate.glossary import Glossary
 
 app = typer.Typer(
     name="brevia",
@@ -85,6 +86,14 @@ def condense(
             console.print(f"[red]Invalid --manual-toc:[/] {exc}")
             raise typer.Exit(code=1) from exc
 
+    glossary_obj: Glossary | None = None
+    if glossary is not None:
+        try:
+            glossary_obj = Glossary.from_json(glossary)
+        except (OSError, ValueError) as exc:
+            console.print(f"[red]Invalid --glossary:[/] {exc}")
+            raise typer.Exit(code=1) from exc
+
     if dry_run:
         try:
             est = estimate_condense(
@@ -129,6 +138,8 @@ def condense(
                 chunk_tokens=settings.default_chunk_tokens,
                 resume=resume,
                 translate_to=translate_to,
+                source_lang=source_lang,
+                glossary=glossary_obj,
                 manual_toc=toc,
                 log=lambda msg: console.print(f"[dim]· {msg}[/]"),
             )
