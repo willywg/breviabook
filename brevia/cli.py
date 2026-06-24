@@ -107,10 +107,8 @@ def condense(
         console.print("[dim]No LLM was called. Cost estimation arrives in Phase 12.[/]")
         return
 
-    if api_endpoint and provider.lower() == "ollama":
-        settings.ollama_endpoint = api_endpoint
     try:
-        llm = get_provider(provider, settings)
+        llm = get_provider(provider, settings, api_endpoint=api_endpoint)
     except ValueError as exc:
         console.print(f"[red]{exc}[/]")
         raise typer.Exit(code=1) from exc
