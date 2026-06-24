@@ -1,0 +1,90 @@
+[project]
+name = "brevia"
+version = "0.0.1"
+description = "Condense large technical ebooks (EPUB/PDF) preserving code and diagrams, optionally translating in the same pass."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+authors = [{ name = "William Wong Garay", email = "willywg@gmail.com" }]
+keywords = ["ebook", "epub", "pdf", "summarization", "llm", "ollama", "translation"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Environment :: Console",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Text Processing",
+]
+
+# Runtime deps — permissive licenses ONLY (see docs/ROADMAP.md §14).
+# AGPL/GPL is forbidden: no ebooklib, no PyMuPDF/fitz.
+dependencies = [
+    "typer>=0.12",          # MIT — CLI
+    "rich>=13.7",           # MIT — progress/tables
+    "pydantic>=2.6",        # MIT — IR + models
+    "pydantic-settings>=2.2", # MIT — .env-backed settings
+    "python-dotenv>=1.0",   # BSD — .env loading
+    "litellm>=1.40",        # MIT — unified provider layer (Ollama/OpenAI/Gemini/OpenRouter)
+    "httpx>=0.27",          # BSD — async HTTP
+    "tiktoken>=0.7",        # MIT — token counting (with char fallback)
+]
+
+[project.optional-dependencies]
+# Parser/renderer deps land with their phases; declared here so the audit covers them early.
+formats = [
+    "lxml>=5.2",            # BSD — XHTML/OPF parsing
+    "beautifulsoup4>=4.12", # MIT
+    "pdfplumber>=0.11",     # MIT — PDF text/tables
+    "pypdf>=4.2",           # BSD — PDF images/metadata
+    "weasyprint>=62",       # BSD — HTML/CSS -> PDF
+]
+
+[project.scripts]
+brevia = "brevia.cli:app"
+
+[project.urls]
+Homepage = "https://github.com/willywg/brevia"
+Repository = "https://github.com/willywg/brevia"
+
+[dependency-groups]
+dev = [
+    "ruff>=0.5",
+    "mypy>=1.10",
+    "pytest>=8.2",
+    "pytest-asyncio>=0.23",
+    "pip-licenses>=4.4",
+    "pre-commit>=3.7",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["brevia"]
+
+# ----------------------------------------------------------------------------
+# Quality tooling (active from Phase 0 — must pass clean from the first commit)
+# ----------------------------------------------------------------------------
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unreachable = true
+files = ["brevia"]
+
+[[tool.mypy.overrides]]
+module = ["litellm.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
