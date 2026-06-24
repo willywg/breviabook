@@ -7,40 +7,38 @@ Design that keeps code safe and structure intact:
   so code is preserved verbatim by construction (ROADMAP §7.2).
 - Images are kept/dropped by id based on the model's ``essential_images`` (§7.1).
 - If the condensed output is longer than the input, we flag it (§7.3, cognitivetech).
+
+Shared segmentation/parsing primitives live in :mod:`brevia.condense.common`.
 """
 
 from __future__ import annotations
 
-import json
-import re
 from collections.abc import Callable
-from dataclasses import dataclass, field
 
 from pydantic import BaseModel, Field
 
 from brevia.condense.chunker import Chunk
-from brevia.condense.prompts import build_condense_messages
-from brevia.ir.models import (
-    Block,
-    Chapter,
-    CodeBlock,
-    Document,
-    HeadingBlock,
-    ImageBlock,
-    ListBlock,
-    ParagraphBlock,
-    QuoteBlock,
-    TableBlock,
+from brevia.condense.common import (
+    CondenseError,
+    Segment,
+    extract_json,
+    run_text,
+    segment_blocks,
+    split_paragraphs,
+    structural_marker,
 )
+from brevia.condense.prompts import build_condense_messages
+from brevia.ir.models import Block, Chapter, Document, ParagraphBlock
 from brevia.llm.base import LLMProvider
 from brevia.persistence.checkpoint import CheckpointManager
 from brevia.utils.tokens import block_tokens
 
-_PARA_SPLIT = re.compile(r"\n\s*\n")
-
-
-class CondenseError(Exception):
-    """Raised when the model response cannot be parsed into a condensation result."""
+__all__ = [
+    "CondenseError",
+    "CondensedChunk",
+    "Condenser",
+    "assemble_condensed_document",
+]
 
 
 class CondensedChunk(BaseModel):
@@ -55,16 +53,6 @@ class CondensedChunk(BaseModel):
     input_tokens: int = 0
     output_tokens: int = 0
     output_longer_than_input: bool = False
-
-
-@dataclass
-class _Segment:
-    kind: str  # "text" | "keep" | "image"
-    run_id: int | None = None
-    blocks: list[Block] = field(default_factory=list)  # for text runs
-    block: Block | None = None  # for keep/image
-    image_id: str | None = None
-    caption: str | None = None
 
 
 class Condenser:
@@ -86,8 +74,7 @@ class Condenser:
         results: list[CondensedChunk] = []
         for chunk in chunks:
             if checkpoint is not None and checkpoint.is_done(chunk.id):
-                stored = checkpoint.get(chunk.id)
-                cc = CondensedChunk.model_validate(stored)
+                cc = CondensedChunk.model_validate(checkpoint.get(chunk.id))
             else:
                 cc = await self.condense_chunk(chunk)
                 if checkpoint is not None:
@@ -98,9 +85,8 @@ class Condenser:
         return results
 
     async def condense_chunk(self, chunk: Chunk) -> CondensedChunk:
-        segments = _segment_chunk(chunk.blocks)
-        text_segments = [s for s in segments if s.kind == "text"]
-        if not text_segments:
+        segments = segment_blocks(chunk.blocks)
+        if not any(s.kind == "text" for s in segments):
             return self._passthrough(chunk, segments)
 
         body, image_ids = _serialize(segments)
@@ -112,7 +98,7 @@ class Condenser:
     def _reassemble(
         self,
         chunk: Chunk,
-        segments: list[_Segment],
+        segments: list[Segment],
         texts: dict[str, str],
         essential: set[str],
     ) -> CondensedChunk:
@@ -121,11 +107,8 @@ class Condenser:
         dropped: list[str] = []
         for seg in segments:
             if seg.kind == "text":
-                condensed = texts.get(str(seg.run_id), "").strip()
-                for para in _PARA_SPLIT.split(condensed):
-                    cleaned = para.strip()
-                    if cleaned:
-                        new_blocks.append(ParagraphBlock(text=cleaned))
+                for para in split_paragraphs(texts.get(str(seg.run_id), "")):
+                    new_blocks.append(ParagraphBlock(text=para))
             elif seg.kind == "keep" and seg.block is not None:
                 new_blocks.append(seg.block)
             elif seg.kind == "image" and seg.image_id is not None:
@@ -136,7 +119,7 @@ class Condenser:
                     dropped.append(seg.image_id)
         return self._build(chunk, new_blocks, kept, dropped)
 
-    def _passthrough(self, chunk: Chunk, segments: list[_Segment]) -> CondensedChunk:
+    def _passthrough(self, chunk: Chunk, segments: list[Segment]) -> CondensedChunk:
         """No prose to condense: keep blocks and all images unchanged."""
         kept = [s.image_id for s in segments if s.kind == "image" and s.image_id]
         return self._build(chunk, list(chunk.blocks), kept, [])
@@ -158,78 +141,26 @@ class Condenser:
         )
 
 
-# --------------------------------------------------------------------------- #
-# Segmentation / serialization / parsing
-# --------------------------------------------------------------------------- #
-
-
-def _segment_chunk(blocks: list[Block]) -> list[_Segment]:
-    segments: list[_Segment] = []
-    run: list[Block] = []
-    run_counter = 0
-
-    def flush_run() -> None:
-        nonlocal run, run_counter
-        if run:
-            run_counter += 1
-            segments.append(_Segment(kind="text", run_id=run_counter, blocks=run))
-            run = []
-
-    for block in blocks:
-        if isinstance(block, (ParagraphBlock, QuoteBlock, ListBlock)):
-            run.append(block)
-        elif isinstance(block, ImageBlock):
-            flush_run()
-            segments.append(
-                _Segment(kind="image", block=block, image_id=block.image_id, caption=block.caption)
-            )
-        else:  # HeadingBlock, CodeBlock, TableBlock — preserved structurally
-            flush_run()
-            segments.append(_Segment(kind="keep", block=block))
-    flush_run()
-    return segments
-
-
-def _serialize(segments: list[_Segment]) -> tuple[str, list[str]]:
+def _serialize(segments: list[Segment]) -> tuple[str, list[str]]:
+    """Serialize segments to the condense prompt body; return (body, image_ids)."""
     lines: list[str] = []
     image_ids: list[str] = []
     for seg in segments:
         if seg.kind == "text":
             lines.append(f"[TEXT {seg.run_id}]")
-            lines.append(_run_text(seg.blocks))
+            lines.append(run_text(seg.blocks))
         elif seg.kind == "image" and seg.image_id is not None:
             cap = f' — "{seg.caption}"' if seg.caption else ""
             lines.append(f"[IMG:{seg.image_id}{cap}]")
             image_ids.append(seg.image_id)
         elif seg.kind == "keep":
-            lines.append(_keep_text(seg.block))
+            lines.append(structural_marker(seg.block))
         lines.append("")
     return "\n".join(lines).strip(), image_ids
 
 
-def _run_text(blocks: list[Block]) -> str:
-    parts: list[str] = []
-    for block in blocks:
-        if isinstance(block, ListBlock):
-            parts.append("\n".join(f"- {item}" for item in block.items))
-        elif isinstance(block, (ParagraphBlock, QuoteBlock)):
-            parts.append(block.text)
-    return "\n\n".join(p for p in parts if p)
-
-
-def _keep_text(block: Block | None) -> str:
-    if isinstance(block, HeadingBlock):
-        return f"[HEADING] {'#' * block.level} {block.text}"
-    if isinstance(block, CodeBlock):
-        fence = f"```{block.language or ''}\n{block.text.rstrip()}\n```"
-        return f"[CODE BLOCK - preserved verbatim, do not reproduce]\n{fence}"
-    if isinstance(block, TableBlock):
-        return "[TABLE - preserved]"
-    return ""
-
-
 def _parse_response(raw: str) -> tuple[dict[str, str], set[str]]:
-    obj = _extract_json(raw)
+    obj = extract_json(raw)
     texts_raw = obj.get("texts")
     texts: dict[str, str] = {}
     if isinstance(texts_raw, dict):
@@ -239,25 +170,6 @@ def _parse_response(raw: str) -> tuple[dict[str, str], set[str]]:
     essential_raw = obj.get("essential_images")
     essential = {str(x) for x in essential_raw} if isinstance(essential_raw, list) else set()
     return texts, essential
-
-
-def _extract_json(text: str) -> dict[str, object]:
-    start = text.find("{")
-    end = text.rfind("}")
-    if start == -1 or end == -1 or end < start:
-        raise CondenseError("No JSON object found in model response")
-    try:
-        obj = json.loads(text[start : end + 1])
-    except json.JSONDecodeError as exc:
-        raise CondenseError(f"Invalid JSON in model response: {exc}") from exc
-    if not isinstance(obj, dict):
-        raise CondenseError("Model response JSON is not an object")
-    return obj
-
-
-# --------------------------------------------------------------------------- #
-# Assembly into a condensed Document
-# --------------------------------------------------------------------------- #
 
 
 def assemble_condensed_document(original: Document, condensed: list[CondensedChunk]) -> Document:
