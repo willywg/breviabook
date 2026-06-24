@@ -52,12 +52,16 @@ class Synthesizer:
         *,
         tolerance: float = 0.15,
         max_trim_passes: int = 2,
+        min_target_tokens: int = 100,
     ) -> None:
         self.provider = provider
         self.model = model
         self.target_ratio = target_ratio
         self.tolerance = tolerance
         self.max_trim_passes = max_trim_passes
+        # Don't chase a target below this — tiny chapters can't be meaningfully compressed,
+        # and doing so triggers pointless trim passes (wasted LLM calls).
+        self.min_target_tokens = min_target_tokens
 
     async def synthesize(
         self,
@@ -79,10 +83,16 @@ class Synthesizer:
         blocks: list[Block] = [b for cc in chunks for b in cc.blocks]
         kept_image_ids = [iid for cc in chunks for iid in cc.kept_image_ids]
         input_tokens = sum(cc.input_tokens for cc in chunks)
-        target_tokens = max(1, round(self.target_ratio * input_tokens))
+        target_tokens = max(round(self.target_ratio * input_tokens), self.min_target_tokens)
 
         segments = segment_blocks(blocks)
         if not any(s.kind == "text" for s in segments):
+            return self._result(first, blocks, kept_image_ids, input_tokens, target_tokens, 0)
+
+        # A single chunk already within budget has nothing to smooth across boundaries and
+        # nothing to trim — skip the LLM entirely (avoids wasted calls on small chapters).
+        current_tokens = sum(block_tokens(b) for b in blocks)
+        if len(chunks) == 1 and current_tokens <= target_tokens:
             return self._result(first, blocks, kept_image_ids, input_tokens, target_tokens, 0)
 
         blocks = await self._synth_pass(segments, target_tokens, smooth=True)

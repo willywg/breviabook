@@ -144,6 +144,16 @@ def test_estimate_on_pdf_no_llm() -> None:
     assert est.input_tokens > 0
 
 
+def test_estimate_includes_token_breakdown() -> None:
+    base = estimate_condense(FIXTURE, target_ratio=0.3)
+    assert base.estimated_prompt_tokens > 0
+    assert base.estimated_completion_tokens > 0
+    assert base.estimated_cost_usd is None  # no provider/model given -> no cost
+    # Translation adds an extra pass -> more estimated completion tokens.
+    translated = estimate_condense(FIXTURE, target_ratio=0.3, translate_to="Spanish")
+    assert translated.estimated_completion_tokens > base.estimated_completion_tokens
+
+
 class RoutingProvider:
     """Returns a translate reply for translate prompts, else a condense/synth reply."""
 

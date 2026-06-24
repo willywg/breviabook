@@ -98,19 +98,29 @@ def condense(
                 chunk_tokens=settings.default_chunk_tokens,
                 target_ratio=resolved_ratio,
                 manual_toc=toc,
+                provider_name=provider,
+                model=resolved_model,
+                translate_to=translate_to,
             )
         except (NotImplementedError, ValueError) as exc:
             console.print(f"[red]{exc}[/]")
             raise typer.Exit(code=1) from exc
         table = Table(title="Brevia — dry run estimate", show_header=False)
         table.add_row("input", str(input_file))
+        table.add_row("provider / model", f"{provider} / {resolved_model}")
         table.add_row("chapters", str(est.chapters))
         table.add_row("chunks", str(est.chunks))
-        table.add_row("input tokens (est.)", f"{est.input_tokens:,}")
+        table.add_row("input tokens", f"{est.input_tokens:,}")
         table.add_row("output tokens (est.)", f"{est.estimated_output_tokens:,}")
+        table.add_row("LLM prompt tokens (est.)", f"{est.estimated_prompt_tokens:,}")
+        table.add_row("LLM completion tokens (est.)", f"{est.estimated_completion_tokens:,}")
         table.add_row("target ratio", f"{resolved_ratio:.2f}")
+        if est.estimated_cost_usd is not None:
+            table.add_row("estimated cost", f"~${est.estimated_cost_usd:.4f}")
+        else:
+            table.add_row("estimated cost", "n/a (model not priced / local)")
         console.print(table)
-        console.print("[dim]No LLM was called. Cost estimation arrives in Phase 12.[/]")
+        console.print("[dim]Approximate; no LLM was called.[/]")
         return
 
     try:

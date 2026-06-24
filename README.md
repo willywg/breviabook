@@ -1,39 +1,117 @@
 # Brevia
 
-> Condense large technical ebooks (EPUB/PDF) into a fast, filler-free version —
-> preserving code, formulas, and essential diagrams — and optionally translate them
-> in the same pass. Outputs **EPUB, PDF, and Markdown**.
+> Condense large technical ebooks (EPUB/PDF) into a fast, filler-free version — **preserving
+> code, formulas, and the important diagrams** — and optionally **translate** them in the same
+> pass. Outputs **EPUB, PDF, and Markdown**.
 
-Multi-provider LLM from day one: **Ollama** (local), **OpenAI**, **Gemini**,
-**OpenRouter**, and any **OpenAI-compatible** endpoint (vLLM, LM Studio, LocalAI).
+Multi-provider LLM from day one: **Ollama** (local), **OpenAI**, **Gemini**, **OpenRouter**,
+and any **OpenAI-compatible** endpoint (vLLM, LM Studio, LocalAI). Runs fully local on a laptop
+with Ollama, or via a paid API when it makes sense.
 
-Runs fully local on a MacBook with Ollama, or via a paid API when it makes sense.
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
-## Status
+## Why
 
-🚧 Early development. Built in phases following the **[roadmap](docs/ROADMAP.md)** using
-the PRP (Product Requirement Prompt) workflow. **MVP target = Phases 0–7** (condense an
-EPUB → EPUB + PDF + Markdown with Ollama).
+Technical books are long and padded. Brevia reads dense books fast without losing the parts
+that matter — **code examples, tables, and meaningful figures survive; filler doesn't** — and
+can deliver the result in your language (e.g. English → Spanish) in one go.
 
-## Usage
+## Features
+
+- **Structure-aware condensation** — chapter-aware chunking; **code blocks are never
+  summarized or split**.
+- **Hierarchical summarization** — per-chunk condense + per-chapter synthesis with active
+  length control toward a `--target-ratio`.
+- **Image preservation (the differentiator)** — keeps images whose section survives
+  (Strategy A); optional **vision ranking** (`--rank-images`) drops decorative images and
+  improves captions.
+- **Integrated translation** — translates the *already-condensed* book (much cheaper) with an
+  optional glossary for consistent terminology; code stays untranslated.
+- **Three outputs** — EPUB (our own builder), PDF (weasyprint), Markdown.
+- **Resumable** — `--resume` continues an interrupted job from a checkpoint.
+- **Dry-run + cost** — `--dry-run` estimates tokens and approximate cost without calling the LLM.
+- **Usage report** — every run prints prompt/completion/cached tokens and estimated cost.
+
+## Install
+
+Requires **Python 3.11+** and [uv](https://docs.astral.sh/uv/).
 
 ```bash
-brevia condense book.epub --formats epub,pdf,md --out ./out/        # condense
-brevia condense book.epub --dry-run                                 # estimate tokens, no LLM
-brevia condense book.epub --target-ratio 0.30 --resume --out ./out/ # resume an interrupted job
+git clone https://github.com/willywg/brevia.git   # adjust to the final repo URL
+cd brevia
+uv sync --all-extras
 ```
 
-Defaults read from `.env` (copy `.env.example`). Uses local Ollama out of the box.
+Copy `.env.example` to `.env` and set what you need (defaults use local Ollama):
+
+```bash
+cp .env.example .env
+```
 
 ### PDF output requirements
 
-PDF rendering uses [weasyprint](https://weasyprint.org/), which needs system libraries:
+PDF rendering uses [weasyprint](https://weasyprint.org/), which needs system libraries
+(EPUB and Markdown need nothing extra):
 
-- **macOS:** `brew install pango gdk-pixbuf libffi` — on Apple Silicon also export
-  `DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib` so the libraries are found.
+- **macOS:** `brew install pango gdk-pixbuf libffi` — on Apple Silicon also
+  `export DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib`.
 - **Debian/Ubuntu:** `libpango-1.0-0 libpangocairo-1.0-0 libgdk-pixbuf-2.0-0 libffi-dev`.
 
-EPUB and Markdown output need no extra system libraries.
+## Quickstart
+
+```bash
+# Local, all three formats, with Ollama
+uv run brevia condense book.epub --formats epub,pdf,md --out ./out/
+
+# Estimate tokens + cost first, without calling the LLM
+uv run brevia condense book.epub --dry-run
+
+# Condense + translate to Spanish with a higher-quality cloud model
+uv run brevia condense book.epub \
+  --provider gemini --model gemini-3-flash-preview \
+  --translate-to Spanish --source-lang English --glossary glossary.json \
+  --formats epub,md --out ./out/
+
+# Drop decorative images with a vision model, and resume if interrupted
+uv run brevia condense book.pdf --provider gemini --model gemini-3-flash-preview \
+  --rank-images --resume --out ./out/
+```
+
+## CLI
+
+```
+brevia condense INPUT.{epub,pdf} [options]
+
+  --provider        ollama | openai | gemini | openrouter        (default: ollama)
+  --model           model tag (default from .env)
+  --api-endpoint    base URL for OpenAI-compatible servers (vLLM/LM Studio/LocalAI)
+  --target-ratio    target size, e.g. 0.30 = ~30% of the original
+  --formats         comma list of epub,pdf,md                     (default: epub,pdf,md)
+  --translate-to    target language (omit = no translation)
+  --source-lang     source language (optional hint)
+  --glossary        glossary JSON {source_term: target_term}
+  --rank-images     use a vision model to score/drop images
+  --manual-toc      manual TOC JSON for PDFs without an outline
+  --out             output directory                              (default: ./output)
+  --resume          resume from checkpoint
+  --dry-run         estimate tokens/cost only, no LLM call
+```
+
+## Configuration (`.env`)
+
+```
+LLM_PROVIDER=ollama
+OLLAMA_ENDPOINT=http://localhost:11434
+DEFAULT_MODEL=gemma4:e4b
+
+OPENAI_API_KEY=         # comma-separated for key rotation
+GEMINI_API_KEY=
+OPENROUTER_API_KEY=
+
+DEFAULT_TARGET_RATIO=0.30
+DEFAULT_CHUNK_TOKENS=2000
+IMAGE_STRATEGY=keep_referenced   # keep_referenced | vision_ranked
+```
 
 ## How it works
 
@@ -41,13 +119,26 @@ Everything flows through a format-agnostic **Intermediate Representation (IR)**:
 
 ```
 parse → chunk → condense → synthesize → (translate) → image-select → render
+        EPUB/PDF → IR        per-chunk    per-chapter    glossary      Strategy A/B   EPUB/PDF/MD
 ```
 
-Parsers turn EPUB/PDF into the IR; the condenser and translator transform its text
-blocks (leaving code and images intact); renderers emit the final files. See the
-[roadmap](docs/ROADMAP.md) for the full design.
+Parsers turn EPUB/PDF into the IR; the condenser and translator transform its text blocks
+(leaving code and images intact); renderers emit the final files. Adding an input or output
+format means writing one parser or one renderer — the condensation logic doesn't change.
+
+See the full design and build plan in **[docs/ROADMAP.md](docs/ROADMAP.md)**.
+
+## Development
+
+```bash
+uv run ruff check . && uv run ruff format --check .   # lint + format
+uv run mypy --strict brevia                           # types
+uv run pytest -q                                       # tests
+uv run pip-licenses --fail-on "GPL"                    # license audit (blocks GPL/AGPL)
+```
 
 ## License
 
-[Apache-2.0](LICENSE). Brevia is **inspired by** open-source work but contains no copied
-code and depends on no copyleft (GPL/AGPL) libraries — see roadmap §14.
+[Apache-2.0](LICENSE). Brevia is **inspired by** open-source work but contains no copied code
+and depends on no copyleft (GPL/AGPL) libraries — see [docs/ROADMAP.md §14](docs/ROADMAP.md)
+and [NOTICE](NOTICE).

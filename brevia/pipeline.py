@@ -19,6 +19,7 @@ from brevia.images.selector import ImageSelector
 from brevia.images.vision_ranker import VisionRanker
 from brevia.ir.models import Document
 from brevia.llm.base import LLMProvider, VisionProvider
+from brevia.llm.pricing import estimate_cost
 from brevia.llm.usage import Usage
 from brevia.parsers.epub_parser import EpubParser
 from brevia.parsers.pdf_parser import PdfParser, TocEntry
@@ -58,6 +59,9 @@ class Estimate:
     estimated_output_tokens: int
     chapters: int
     chunks: int
+    estimated_prompt_tokens: int = 0
+    estimated_completion_tokens: int = 0
+    estimated_cost_usd: float | None = None
 
 
 def _check_supported(path: Path) -> str:
@@ -123,16 +127,35 @@ def estimate_condense(
     chunk_tokens: int = 2000,
     target_ratio: float = 0.30,
     manual_toc: list[TocEntry] | None = None,
+    provider_name: str | None = None,
+    model: str | None = None,
+    translate_to: str | None = None,
 ) -> Estimate:
-    """Parse and report token/chunk counts without calling the LLM (``--dry-run``)."""
+    """Parse and report token/chunk counts + approximate cost, with NO LLM call (``--dry-run``)."""
     doc = _parse_input_sync(input_path, manual_toc=manual_toc)
     input_tokens = count_document_tokens(doc)
     chunks = Chunker(chunk_tokens).chunk(doc)
+    n_chunks = len(chunks)
+
+    # Approximate token flow across passes: condense (reads full input), synthesis (reads the
+    # condensed text), and translation if requested; plus per-chunk prompt overhead.
+    out = input_tokens * target_ratio
+    translate = bool(translate_to)
+    prompt_est = round(input_tokens + out + (out if translate else 0) + 250 * n_chunks)
+    completion_est = round(out * (2 + (1 if translate else 0)))
+
+    cost: float | None = None
+    if provider_name and model:
+        cost = estimate_cost(provider_name.lower(), model, prompt_est, completion_est)
+
     return Estimate(
         input_tokens=input_tokens,
         estimated_output_tokens=round(input_tokens * target_ratio),
         chapters=len(doc.chapters),
-        chunks=len(chunks),
+        chunks=n_chunks,
+        estimated_prompt_tokens=prompt_est,
+        estimated_completion_tokens=completion_est,
+        estimated_cost_usd=cost,
     )
 
 

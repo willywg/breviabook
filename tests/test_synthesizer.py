@@ -1,4 +1,4 @@
-"""Phase 5: per-chapter synthesis + bounded length control (mock provider)."""
+"""Phase 5 + Phase 12: per-chapter synthesis, bounded length control, small-chapter guard."""
 
 from __future__ import annotations
 
@@ -53,7 +53,15 @@ def _texts(*pairs: str) -> str:
     return json.dumps({"texts": {str(i + 1): t for i, t in enumerate(pairs)}})
 
 
-async def test_smooths_multiple_chunks_preserving_code_and_images() -> None:
+async def test_single_small_chapter_skips_synthesis() -> None:
+    # One chunk already within the (floored) budget → no LLM call at all (Phase 12 guard).
+    chunk = _cc([ParagraphBlock(text="a short paragraph")], input_tokens=50)
+    chapters = await Synthesizer(BoomProvider(), "m").synthesize([chunk])
+    assert chapters[0].trim_passes == 0
+    assert chapters[0].blocks[0].text == "a short paragraph"  # type: ignore[union-attr]
+
+
+async def test_smooths_multiple_chunks_preserving_code() -> None:
     chunks = [
         _cc([ParagraphBlock(text="intro a")], input_tokens=40),
         _cc(
@@ -61,43 +69,42 @@ async def test_smooths_multiple_chunks_preserving_code_and_images() -> None:
             input_tokens=40,
         ),
     ]
-    # merged blocks: [para(intro a), code, para(outro b)] -> two text runs around the code
     provider = QueueProvider([_texts("smoothed intro", "smoothed outro")])
     chapters = await Synthesizer(provider, "m").synthesize(chunks)
 
     assert len(chapters) == 1
+    assert provider.calls == 1  # multi-chunk smooths even when under budget
+    assert chapters[0].trim_passes == 0
     kinds = [b.type for b in chapters[0].blocks]
     assert kinds == ["paragraph", "code", "paragraph"]
     code = chapters[0].blocks[1]
     assert isinstance(code, CodeBlock) and code.text == "x = 1\n"
 
 
-async def test_under_budget_no_trim_pass() -> None:
-    chunk = _cc([ParagraphBlock(text="something")], input_tokens=100)
-    provider = QueueProvider([_texts("tiny")])  # well under 30-token target
-    chapters = await Synthesizer(provider, "m").synthesize([chunk])
-    assert chapters[0].trim_passes == 0
-    assert provider.calls == 1
-
-
 async def test_over_budget_triggers_trim_and_reduces() -> None:
-    chunk = _cc([ParagraphBlock(text="x")], input_tokens=100)  # target ~30
-    long = _texts("word " * 60)  # ~60 tokens, over budget
-    short = _texts("done")  # under budget
+    chunks = [
+        _cc([ParagraphBlock(text="x" * 50)], idx=0, input_tokens=200),
+        _cc([ParagraphBlock(text="y" * 50)], idx=0, input_tokens=200),
+    ]  # total 400 -> target 120
+    long = _texts("word " * 200, "word " * 200)  # over budget
+    short = _texts("done", "done")  # under budget
     provider = QueueProvider([long, short])
-    chapters = await Synthesizer(provider, "m", tolerance=0.15).synthesize([chunk])
+    chapters = await Synthesizer(provider, "m", tolerance=0.15).synthesize(chunks)
     assert chapters[0].trim_passes == 1
     assert provider.calls == 2
     assert chapters[0].output_tokens <= chapters[0].target_tokens * 1.15
 
 
 async def test_trim_loop_is_bounded() -> None:
-    chunk = _cc([ParagraphBlock(text="x")], input_tokens=100)
-    long = _texts("word " * 60)  # always over budget
-    provider = QueueProvider([long])  # repeats forever
-    chapters = await Synthesizer(provider, "m", max_trim_passes=2).synthesize([chunk])
+    chunks = [
+        _cc([ParagraphBlock(text="x" * 50)], idx=0, input_tokens=200),
+        _cc([ParagraphBlock(text="y" * 50)], idx=0, input_tokens=200),
+    ]
+    long = _texts("word " * 200, "word " * 200)  # always over budget
+    provider = QueueProvider([long])
+    chapters = await Synthesizer(provider, "m", max_trim_passes=2).synthesize(chunks)
     assert chapters[0].trim_passes == 2  # capped
-    assert provider.calls == 3  # 1 initial + 2 trim passes
+    assert provider.calls == 3  # 1 smoothing + 2 trim passes
 
 
 async def test_code_only_chapter_passthrough_no_call() -> None:
@@ -108,14 +115,20 @@ async def test_code_only_chapter_passthrough_no_call() -> None:
     assert isinstance(chapters[0].blocks[0], CodeBlock)
 
 
-async def test_target_tokens_from_original_size() -> None:
+async def test_target_tokens_floored_for_tiny_input() -> None:
+    chunk = _cc([ParagraphBlock(text="a")], input_tokens=50)  # 0.3*50=15 -> floored to 100
+    chapters = await Synthesizer(BoomProvider(), "m", min_target_tokens=100).synthesize([chunk])
+    assert chapters[0].target_tokens == 100
+
+
+async def test_target_tokens_from_original_size_when_above_floor() -> None:
     chunks = [
-        _cc([ParagraphBlock(text="a")], input_tokens=50),
-        _cc([ParagraphBlock(text="b")], input_tokens=50),
+        _cc([ParagraphBlock(text="x" * 50)], idx=0, input_tokens=1000),
+        _cc([ParagraphBlock(text="y" * 50)], idx=0, input_tokens=1000),
     ]
     provider = QueueProvider([_texts("a", "b")])
     chapters = await Synthesizer(provider, "m", target_ratio=0.3).synthesize(chunks)
-    assert chapters[0].target_tokens == round(0.3 * 100)
+    assert chapters[0].target_tokens == round(0.3 * 2000)  # 600, above the 100 floor
 
 
 async def test_synthesized_to_document_keeps_only_kept_images() -> None:
@@ -124,8 +137,7 @@ async def test_synthesized_to_document_keeps_only_kept_images() -> None:
         kept=["keep1"],
         input_tokens=40,
     )
-    provider = QueueProvider([_texts("a")])
-    chapters = await Synthesizer(provider, "m").synthesize([chunk])
+    chapters = await Synthesizer(BoomProvider(), "m").synthesize([chunk])  # single small -> skip
     original = Document(
         metadata=DocumentMetadata(title="T", source_format="epub"),
         images={
@@ -143,7 +155,6 @@ async def test_separate_chapters_stay_separate() -> None:
         _cc([ParagraphBlock(text="a")], idx=0, title="One", input_tokens=40),
         _cc([ParagraphBlock(text="b")], idx=1, title="Two", input_tokens=40),
     ]
-    provider = QueueProvider([_texts("a"), _texts("b")])
-    chapters = await Synthesizer(provider, "m").synthesize(chunks)
+    chapters = await Synthesizer(BoomProvider(), "m").synthesize(chunks)  # both small -> skip
     assert [c.title for c in chapters] == ["One", "Two"]
     assert [c.chapter_index for c in chapters] == [0, 1]
