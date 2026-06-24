@@ -18,6 +18,7 @@ from rich.table import Table
 from brevia import __version__
 from brevia.config import load_settings
 from brevia.llm.factory import get_provider
+from brevia.parsers.pdf_parser import TocEntry, load_manual_toc
 from brevia.pipeline import condense_book, estimate_condense, validate_formats
 
 app = typer.Typer(
@@ -51,6 +52,9 @@ def condense(
     translate_to: Annotated[str | None, typer.Option(help="Target language (omit = none)")] = None,
     rank_images: Annotated[bool, typer.Option(help="Use a vision model to rank images")] = False,
     glossary: Annotated[Path | None, typer.Option(help="Glossary JSON for translation")] = None,
+    manual_toc: Annotated[
+        Path | None, typer.Option(help="Manual TOC JSON for PDFs without an outline")
+    ] = None,
     out: Annotated[Path, typer.Option(help="Output directory")] = Path("./output"),
     resume: Annotated[bool, typer.Option(help="Resume from checkpoint")] = False,
     dry_run: Annotated[bool, typer.Option(help="Estimate tokens/cost only, no LLM call")] = False,
@@ -73,12 +77,21 @@ def condense(
     if rank_images:
         console.print("[yellow]--rank-images[/] (vision ranking) arrives in Phase 11; ignoring.")
 
+    toc: list[TocEntry] | None = None
+    if manual_toc is not None:
+        try:
+            toc = load_manual_toc(manual_toc)
+        except (OSError, ValueError) as exc:
+            console.print(f"[red]Invalid --manual-toc:[/] {exc}")
+            raise typer.Exit(code=1) from exc
+
     if dry_run:
         try:
             est = estimate_condense(
                 input_file,
                 chunk_tokens=settings.default_chunk_tokens,
                 target_ratio=resolved_ratio,
+                manual_toc=toc,
             )
         except (NotImplementedError, ValueError) as exc:
             console.print(f"[red]{exc}[/]")
@@ -118,6 +131,7 @@ def condense(
                 chunk_tokens=settings.default_chunk_tokens,
                 resume=resume,
                 translate_to=translate_to,
+                manual_toc=toc,
                 log=lambda msg: console.print(f"[dim]· {msg}[/]"),
             )
         )

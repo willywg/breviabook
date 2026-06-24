@@ -18,8 +18,9 @@ from brevia.condense.synthesizer import Synthesizer, synthesized_to_document
 from brevia.images.selector import ImageSelector
 from brevia.ir.models import Document
 from brevia.llm.base import LLMProvider
-from brevia.parsers.base import Parser
 from brevia.parsers.epub_parser import EpubParser
+from brevia.parsers.pdf_parser import PdfParser, TocEntry
+from brevia.parsers.toc_inference import infer_toc
 from brevia.persistence.checkpoint import CheckpointManager
 from brevia.render.base import Renderer
 from brevia.render.epub_renderer import EpubRenderer
@@ -54,13 +55,38 @@ class Estimate:
     chunks: int
 
 
-def _parser_for(path: Path) -> Parser:
+def _check_supported(path: Path) -> str:
     suffix = path.suffix.lower()
-    if suffix == ".epub":
-        return EpubParser()
-    if suffix == ".pdf":
-        raise NotImplementedError("PDF input arrives in Phase 8; for now use an .epub.")
-    raise ValueError(f"Unsupported input format: {suffix!r} (expected .epub or .pdf)")
+    if suffix not in (".epub", ".pdf"):
+        raise ValueError(f"Unsupported input format: {suffix!r} (expected .epub or .pdf)")
+    return suffix
+
+
+async def _parse_input(
+    path: Path,
+    *,
+    manual_toc: list[TocEntry] | None,
+    provider: LLMProvider | None,
+    model: str,
+    infer_pages: int,
+) -> Document:
+    """Parse EPUB or PDF into the IR. For PDF, resolve the TOC (outline → manual → LLM)."""
+    if _check_supported(path) == ".epub":
+        return EpubParser().parse(path)
+    parser = PdfParser()
+    extracted = parser.extract(path)
+    toc = manual_toc if manual_toc is not None else (extracted.outline or None)
+    if toc is None and provider is not None:
+        inferred = await infer_toc(provider, model, extracted.page_texts, max_pages=infer_pages)
+        toc = inferred or None
+    return parser.build(extracted, toc)
+
+
+def _parse_input_sync(path: Path, *, manual_toc: list[TocEntry] | None) -> Document:
+    """Synchronous parse for dry-run (no LLM): EPUB, or PDF via outline/manual TOC only."""
+    if _check_supported(path) == ".epub":
+        return EpubParser().parse(path)
+    return PdfParser().parse(path, toc=manual_toc)
 
 
 def _renderer_for(fmt: str) -> Renderer:
@@ -87,10 +113,14 @@ def validate_formats(formats: list[str]) -> list[str]:
 
 
 def estimate_condense(
-    input_path: Path, *, chunk_tokens: int = 2000, target_ratio: float = 0.30
+    input_path: Path,
+    *,
+    chunk_tokens: int = 2000,
+    target_ratio: float = 0.30,
+    manual_toc: list[TocEntry] | None = None,
 ) -> Estimate:
     """Parse and report token/chunk counts without calling the LLM (``--dry-run``)."""
-    doc = _parser_for(input_path).parse(input_path)
+    doc = _parse_input_sync(input_path, manual_toc=manual_toc)
     input_tokens = count_document_tokens(doc)
     chunks = Chunker(chunk_tokens).chunk(doc)
     return Estimate(
@@ -113,6 +143,8 @@ async def condense_book(
     resume: bool = False,
     checkpoint_path: Path | None = None,
     translate_to: str | None = None,
+    manual_toc: list[TocEntry] | None = None,
+    infer_pages: int = 20,
     log: Log = _noop,
 ) -> CondenseResult:
     """Run the full condensation pipeline and write the requested output formats."""
@@ -122,7 +154,9 @@ async def condense_book(
     warnings: list[str] = []
 
     log(f"Parsing {input_path.name} …")
-    doc = _parser_for(input_path).parse(input_path)
+    doc = await _parse_input(
+        input_path, manual_toc=manual_toc, provider=provider, model=model, infer_pages=infer_pages
+    )
     input_tokens = count_document_tokens(doc)
 
     chunks = Chunker(chunk_tokens).chunk(doc)

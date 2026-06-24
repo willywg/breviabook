@@ -60,12 +60,12 @@ async def test_end_to_end_writes_md_and_epub(tmp_path: Path) -> None:
     assert result.input_tokens > 0
 
 
-async def test_pdf_input_raises_phase8(tmp_path: Path) -> None:
-    fake_pdf = tmp_path / "book.pdf"
-    fake_pdf.write_bytes(b"%PDF-1.7 not really")
-    with pytest.raises(NotImplementedError, match="Phase 8"):
+async def test_unsupported_input_raises(tmp_path: Path) -> None:
+    fake = tmp_path / "book.txt"
+    fake.write_text("hello", encoding="utf-8")
+    with pytest.raises(ValueError, match="Unsupported input format"):
         await condense_book(
-            input_path=fake_pdf,
+            input_path=fake,
             out_dir=tmp_path,
             formats=["md"],
             provider=ScriptedProvider(_REPLY),
@@ -132,3 +132,26 @@ def test_estimate_no_llm(tmp_path: Path) -> None:
     assert est.chapters == 2
     assert est.chunks >= 2
     assert est.estimated_output_tokens == round(est.input_tokens * 0.3)
+
+
+PDF_FIXTURE = Path(__file__).parent / "fixtures" / "sample.pdf"
+
+
+async def test_pdf_input_end_to_end(tmp_path: Path) -> None:
+    # The PDF has an outline, so no TOC inference is needed; condense to Markdown.
+    await condense_book(
+        input_path=PDF_FIXTURE,
+        out_dir=tmp_path,
+        formats=["md"],
+        provider=ScriptedProvider(_REPLY),
+        model="m",
+    )
+    out = tmp_path / "sample-condensed.md"
+    assert out.exists()
+    assert "Chapter One" in out.read_text(encoding="utf-8")
+
+
+def test_estimate_on_pdf_no_llm() -> None:
+    est = estimate_condense(PDF_FIXTURE, chunk_tokens=2000, target_ratio=0.3)
+    assert est.chapters == 2
+    assert est.input_tokens > 0

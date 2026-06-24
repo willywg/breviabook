@@ -7,7 +7,6 @@ here so neither module duplicates them.
 
 from __future__ import annotations
 
-import json
 import re
 from dataclasses import dataclass, field
 
@@ -21,6 +20,7 @@ from brevia.ir.models import (
     QuoteBlock,
     TableBlock,
 )
+from brevia.utils.jsonx import extract_json_object
 
 _PARA_SPLIT = re.compile(r"\n\s*\n")
 
@@ -102,14 +102,7 @@ def split_paragraphs(text: str) -> list[str]:
 
 def extract_json(text: str) -> dict[str, object]:
     """Extract the first top-level JSON object from a model response (tolerant of fences)."""
-    start = text.find("{")
-    end = text.rfind("}")
-    if start == -1 or end == -1 or end < start:
-        raise CondenseError("No JSON object found in model response")
     try:
-        obj = json.loads(text[start : end + 1])
-    except json.JSONDecodeError as exc:
-        raise CondenseError(f"Invalid JSON in model response: {exc}") from exc
-    if not isinstance(obj, dict):
-        raise CondenseError("Model response JSON is not an object")
-    return obj
+        return extract_json_object(text)
+    except ValueError as exc:
+        raise CondenseError(str(exc)) from exc
