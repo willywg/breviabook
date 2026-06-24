@@ -1,0 +1,116 @@
+"""Phase 2: parse EPUB -> render Markdown round-trip (no LLM)."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from brevia.ir.models import (
+    Chapter,
+    Document,
+    DocumentMetadata,
+    ImageAsset,
+    ImageBlock,
+    ListBlock,
+    TableBlock,
+)
+from brevia.parsers.epub_parser import EpubParser
+from brevia.render.md_renderer import MarkdownRenderer
+
+FIXTURE = Path(__file__).parent / "fixtures" / "sample.epub"
+
+
+@pytest.fixture
+def rendered(tmp_path: Path) -> tuple[Path, str]:
+    doc = EpubParser().parse(FIXTURE)
+    out_file = MarkdownRenderer().render(doc, tmp_path)
+    return out_file, out_file.read_text(encoding="utf-8")
+
+
+def test_md_file_created(rendered: tuple[Path, str]) -> None:
+    out_file, text = rendered
+    assert out_file.name == "condensed-book.md"
+    assert text.strip()
+
+
+def test_headings_present(rendered: tuple[Path, str]) -> None:
+    _, text = rendered
+    assert "# Chapter One" in text
+    assert "# Chapter Two" in text
+
+
+def test_code_block_verbatim_and_fenced(rendered: tuple[Path, str]) -> None:
+    _, text = rendered
+    assert "```python" in text
+    assert 'def hello() -> str:\n    return "world"' in text
+
+
+def test_quote_and_list(rendered: tuple[Path, str]) -> None:
+    _, text = rendered
+    assert "> A quote worth keeping." in text
+    assert "- First item" in text
+    assert "- Second item" in text
+
+
+def test_table_rendered(rendered: tuple[Path, str]) -> None:
+    _, text = rendered
+    assert "| Name | Value |" in text
+    assert "| --- | --- |" in text
+    assert "| alpha | 1 |" in text
+
+
+def test_image_link_and_file_written(tmp_path: Path) -> None:
+    doc = EpubParser().parse(FIXTURE)
+    out_file = MarkdownRenderer().render(doc, tmp_path)
+    text = out_file.read_text(encoding="utf-8")
+    assert "![Figure 2.1 - the architecture](images/fig1.png)" in text
+    img = tmp_path / "images" / "fig1.png"
+    assert img.exists()
+    assert img.read_bytes().startswith(b"\x89PNG")
+
+
+def test_no_orphan_image_links(tmp_path: Path) -> None:
+    doc = Document(
+        metadata=DocumentMetadata(title="T", source_format="epub"),
+        images={"x": ImageAsset(image_id="x", data=b"\x89PNG", mime="image/png")},
+        chapters=[Chapter(blocks=[ImageBlock(image_id="x")])],
+    )
+    out_file = MarkdownRenderer().render(doc, tmp_path)
+    assert (tmp_path / "images" / "x.png").exists()
+    assert "(images/x.png)" in out_file.read_text(encoding="utf-8")
+
+
+def test_chapter_title_not_duplicated(rendered: tuple[Path, str]) -> None:
+    # The parser derives chapter.title from the leading <h1>; render it only once.
+    _, text = rendered
+    assert text.count("# Chapter One") == 1
+    assert text.count("# Chapter Two") == 1
+
+
+def test_synthetic_chapter_title_when_no_leading_heading(tmp_path: Path) -> None:
+    from brevia.ir.models import ParagraphBlock
+
+    doc = Document(
+        metadata=DocumentMetadata(title="Book", source_format="epub"),
+        chapters=[Chapter(title="Intro", blocks=[ParagraphBlock(text="body")])],
+    )
+    text = MarkdownRenderer().render(doc, tmp_path).read_text(encoding="utf-8")
+    assert "## Intro" in text
+
+
+def test_ordered_list_and_table_escaping(tmp_path: Path) -> None:
+    doc = Document(
+        metadata=DocumentMetadata(title="T", source_format="epub"),
+        chapters=[
+            Chapter(
+                blocks=[
+                    ListBlock(items=["a", "b"], ordered=True),
+                    TableBlock(rows=[["a|b", "c"], ["1", "2"]]),
+                ]
+            )
+        ],
+    )
+    text = MarkdownRenderer().render(doc, tmp_path).read_text(encoding="utf-8")
+    assert "1. a" in text and "2. b" in text
+    assert r"a\|b" in text
