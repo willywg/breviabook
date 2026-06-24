@@ -82,7 +82,7 @@ warn_unreachable = true
 files = ["brevia"]
 
 [[tool.mypy.overrides]]
-module = ["litellm.*", "lxml.*"]
+module = ["litellm.*", "lxml.*", "weasyprint.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

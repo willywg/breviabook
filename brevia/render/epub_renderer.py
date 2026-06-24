@@ -13,25 +13,14 @@ IR round-trip test (render → parse) is stable (§11).
 from __future__ import annotations
 
 import hashlib
-import html
 import re
 import zipfile
 from pathlib import Path
-from typing import assert_never
 
-from brevia.ir.models import (
-    Block,
-    Chapter,
-    CodeBlock,
-    Document,
-    HeadingBlock,
-    ImageBlock,
-    ListBlock,
-    ParagraphBlock,
-    QuoteBlock,
-    TableBlock,
-)
+from brevia.ir.models import Chapter, Document
 from brevia.render.base import image_filename
+from brevia.render.html import block_to_html
+from brevia.render.html import esc as _esc
 
 _MODIFIED = "2026-01-01T00:00:00Z"  # fixed for deterministic output
 _NCNAME_BAD = re.compile(r"[^A-Za-z0-9._-]")
@@ -43,10 +32,6 @@ _CONTAINER_XML = """<?xml version="1.0" encoding="UTF-8"?>
   </rootfiles>
 </container>
 """
-
-
-def _esc(text: str) -> str:
-    return html.escape(text, quote=True)
 
 
 def _xml_id(raw: str, used: set[str]) -> str:
@@ -108,44 +93,17 @@ class EpubRenderer:
     def _chapter_xhtml(
         self, title: str, chapter: Chapter, image_entries: dict[str, tuple[str, str, str]]
     ) -> str:
-        body = "\n".join(self._block_to_xhtml(b, image_entries) for b in chapter.blocks)
+        def image_src(image_id: str) -> str | None:
+            entry = image_entries.get(image_id)
+            return entry[1] if entry is not None else None
+
+        body = "\n".join(block_to_html(b, image_src) for b in chapter.blocks)
         return (
             '<?xml version="1.0" encoding="UTF-8"?>\n'
             '<html xmlns="http://www.w3.org/1999/xhtml">\n'
             f"<head><title>{_esc(title)}</title></head>\n"
             f"<body>\n{body}\n</body>\n</html>\n"
         )
-
-    def _block_to_xhtml(self, block: Block, image_entries: dict[str, tuple[str, str, str]]) -> str:
-        if isinstance(block, HeadingBlock):
-            return f"<h{block.level}>{_esc(block.text)}</h{block.level}>"
-        if isinstance(block, ParagraphBlock):
-            return f"<p>{_esc(block.text)}</p>"
-        if isinstance(block, CodeBlock):
-            cls = f' class="language-{_esc(block.language)}"' if block.language else ""
-            return f"<pre><code{cls}>{_esc(block.text)}</code></pre>"
-        if isinstance(block, QuoteBlock):
-            return f"<blockquote>{_esc(block.text)}</blockquote>"
-        if isinstance(block, ListBlock):
-            tag = "ol" if block.ordered else "ul"
-            items = "".join(f"<li>{_esc(item)}</li>" for item in block.items)
-            return f"<{tag}>{items}</{tag}>"
-        if isinstance(block, TableBlock):
-            rows = []
-            for r_index, row in enumerate(block.rows):
-                cell = "th" if r_index == 0 else "td"
-                cells = "".join(f"<{cell}>{_esc(c)}</{cell}>" for c in row)
-                rows.append(f"<tr>{cells}</tr>")
-            return f"<table>{''.join(rows)}</table>"
-        if isinstance(block, ImageBlock):
-            entry = image_entries.get(block.image_id)
-            if entry is None:
-                return ""  # selector guarantees this won't happen
-            _mid, href, _name = entry
-            alt = _esc(block.caption or "")
-            caption = f"<figcaption>{_esc(block.caption)}</figcaption>" if block.caption else ""
-            return f'<figure><img src="{href}" alt="{alt}"/>{caption}</figure>'
-        assert_never(block)
 
     # -- OPF / nav ------------------------------------------------------------ #
 
