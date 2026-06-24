@@ -147,6 +147,19 @@ def condense(
     if resume and result.chunks_reused:
         table.add_row("chunks reused", f"{result.chunks_reused}/{result.chunks_total}")
     console.print(table)
+
+    usage = result.usage
+    if usage and usage.calls:
+        usage_table = Table(title="LLM usage", show_header=False)
+        usage_table.add_row("LLM calls", f"{usage.calls}")
+        usage_table.add_row("prompt tokens", f"{usage.prompt_tokens:,}")
+        usage_table.add_row("completion tokens", f"{usage.completion_tokens:,}")
+        usage_table.add_row("cached tokens", f"{usage.cached_tokens:,}")
+        usage_table.add_row("total tokens", f"{usage.total_tokens:,}")
+        cost = f"~${usage.cost_usd:.4f}" if usage.cost_usd > 0 else "n/a (model not priced)"
+        usage_table.add_row("estimated cost", cost)
+        console.print(usage_table)
+
     for warning in result.warnings:
         console.print(f"[yellow]⚠ {warning}[/]")
 

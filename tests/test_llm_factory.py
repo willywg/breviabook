@@ -40,15 +40,18 @@ def test_factory_builds_cloud_providers_with_keys() -> None:
 
 
 def test_factory_missing_key_raises_with_env_var() -> None:
+    # Explicit empty keys so the test is independent of any ambient .env.
+    empty = Settings(openai_api_key="", gemini_api_key="", openrouter_api_key="")
     with pytest.raises(ValueError, match="OPENAI_API_KEY"):
-        get_provider("openai", Settings())
+        get_provider("openai", empty)
     with pytest.raises(ValueError, match="GEMINI_API_KEY"):
-        get_provider("gemini", Settings())
+        get_provider("gemini", empty)
 
 
 def test_openai_compatible_endpoint_without_key() -> None:
     # A local OpenAI-compatible server needs no real key.
-    provider = get_provider("openai", Settings(), api_endpoint="http://localhost:1234/v1")
+    empty = Settings(openai_api_key="")
+    provider = get_provider("openai", empty, api_endpoint="http://localhost:1234/v1")
     assert isinstance(provider, OpenAIProvider)
     assert provider.base_url == "http://localhost:1234/v1"
 

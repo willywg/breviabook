@@ -18,6 +18,7 @@ from brevia.condense.synthesizer import Synthesizer, synthesized_to_document
 from brevia.images.selector import ImageSelector
 from brevia.ir.models import Document
 from brevia.llm.base import LLMProvider
+from brevia.llm.usage import Usage
 from brevia.parsers.epub_parser import EpubParser
 from brevia.parsers.pdf_parser import PdfParser, TocEntry
 from brevia.parsers.toc_inference import infer_toc
@@ -45,6 +46,7 @@ class CondenseResult:
     warnings: list[str] = field(default_factory=list)
     chunks_total: int = 0
     chunks_reused: int = 0
+    usage: Usage | None = None
 
 
 @dataclass
@@ -192,6 +194,7 @@ async def condense_book(
         log(f"Rendering {fmt} …")
         output_files.append(_render(fmt, final_doc, out_dir, stem))
 
+    usage = getattr(provider, "usage", None)
     return CondenseResult(
         output_files=output_files,
         input_tokens=input_tokens,
@@ -199,6 +202,7 @@ async def condense_book(
         warnings=warnings,
         chunks_total=len(chunks),
         chunks_reused=reused_before if resume else 0,
+        usage=usage if isinstance(usage, Usage) else None,
     )
 
 
