@@ -14,7 +14,8 @@ Two threats are guarded here:
 from __future__ import annotations
 
 import os
-from urllib.parse import urlparse
+import posixpath
+from urllib.parse import unquote, urlparse
 
 
 def safe_extract_path(base_dir: str, entry_name: str) -> str:
@@ -28,6 +29,23 @@ def safe_extract_path(base_dir: str, entry_name: str) -> str:
     if target != base and not target.startswith(base + os.sep):
         raise ValueError(f"Unsafe archive entry path (zip-slip): {entry_name!r}")
     return target
+
+
+def resolve_archive_href(base_href: str, rel_href: str) -> str:
+    """Resolve ``rel_href`` against ``base_href`` *inside a ZIP/EPUB*, refusing traversal.
+
+    Works on archive-internal POSIX paths (no filesystem access). ``base_href`` is the path
+    of the referencing file within the archive (e.g. ``OEBPS/text/ch1.xhtml``).
+
+    Raises:
+        ValueError: if the resolved path escapes the archive root (zip-slip).
+    """
+    rel = unquote(rel_href.split("#", 1)[0].split("?", 1)[0])
+    base_dir = posixpath.dirname(base_href)
+    resolved = posixpath.normpath(posixpath.join(base_dir, rel))
+    if resolved.startswith("../") or resolved.startswith("/"):
+        raise ValueError(f"Unsafe archive href (zip-slip): {rel_href!r}")
+    return resolved
 
 
 def assert_endpoint_allowed(endpoint: str, allowed_hosts: set[str]) -> None:
