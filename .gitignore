@@ -1,0 +1,52 @@
+# --- Secrets & local config (see ROADMAP §12: never commit API keys) ---
+.env
+.env.*
+!.env.example
+*.key
+secrets/
+
+# --- Job state / checkpoints / databases (never commit, ROADMAP §12) ---
+*.sqlite
+*.sqlite3
+*.db
+checkpoints/
+.brevia/
+output/
+out/
+
+# --- Reference repos must stay OUTSIDE the tree (ROADMAP §14) ---
+# (kept here as a guard in case someone clones them in by accident)
+TranslateBooksWithLLMs/
+ollama-ebook-summary/
+OllamaBook-Summarize/
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+.python-version
+
+# --- Tooling caches ---
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# --- Editors / OS ---
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# --- Test artifacts (keep fixtures, ignore generated) ---
+tests/output/
+*.generated.*
