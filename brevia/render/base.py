@@ -29,7 +29,7 @@ class Renderer(Protocol):
 
     name: str
 
-    def render(self, doc: Document, out_dir: Path) -> Path: ...
+    def render(self, doc: Document, out_dir: Path, *, stem: str = ...) -> Path: ...
 
 
 def image_filename(asset: ImageAsset) -> str:

@@ -82,7 +82,16 @@ class PdfRenderer:
     name = "pdf"
 
     def render(self, doc: Document, out_dir: Path, *, stem: str = "condensed-book") -> Path:
-        from weasyprint import HTML  # lazy: avoids import-time system-lib dependency
+        try:
+            from weasyprint import HTML  # lazy: avoids import-time system-lib dependency
+        except OSError as exc:  # missing Pango/GLib/cairo at runtime
+            raise RuntimeError(
+                "PDF output needs weasyprint's system libraries. "
+                "Install them (macOS: `brew install pango gdk-pixbuf libffi`; "
+                "Debian/Ubuntu: libpango-1.0-0 libpangocairo-1.0-0 libgdk-pixbuf-2.0-0 "
+                "libffi-dev). On macOS Apple Silicon also export "
+                "DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib."
+            ) from exc
 
         out_dir.mkdir(parents=True, exist_ok=True)
         out_file = out_dir / f"{stem}.pdf"

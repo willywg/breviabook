@@ -7,6 +7,7 @@ synthesize -> translate -> render) is wired in later phases.
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Annotated
 
@@ -16,6 +17,8 @@ from rich.table import Table
 
 from brevia import __version__
 from brevia.config import load_settings
+from brevia.llm.factory import get_provider
+from brevia.pipeline import condense_book, estimate_condense, validate_formats
 
 app = typer.Typer(
     name="brevia",
@@ -52,31 +55,88 @@ def condense(
     resume: Annotated[bool, typer.Option(help="Resume from checkpoint")] = False,
     dry_run: Annotated[bool, typer.Option(help="Estimate tokens/cost only, no LLM call")] = False,
 ) -> None:
-    """Condense INPUT into a shorter version (Phase 0: parses + prints config only)."""
+    """Condense INPUT into a shorter version (EPUB/PDF/MD), optionally translated."""
     settings = load_settings()
     resolved_model = model or settings.default_model
     resolved_ratio = target_ratio if target_ratio is not None else settings.default_target_ratio
 
-    table = Table(title="Brevia — resolved run configuration", show_header=False)
-    table.add_row("input", str(input_file))
-    table.add_row("provider", provider)
-    table.add_row("model", resolved_model)
-    table.add_row("api_endpoint", api_endpoint or "(default)")
-    table.add_row("target_ratio", f"{resolved_ratio:.2f}")
-    table.add_row("formats", formats)
-    table.add_row("source_lang", source_lang or "(auto)")
-    table.add_row("translate_to", translate_to or "(none)")
-    table.add_row("rank_images", str(rank_images))
-    table.add_row("glossary", str(glossary) if glossary else "(none)")
-    table.add_row("out", str(out))
-    table.add_row("resume", str(resume))
-    table.add_row("dry_run", str(dry_run))
-    console.print(table)
+    if not input_file.exists():
+        console.print(f"[red]Input not found:[/] {input_file}")
+        raise typer.Exit(code=1)
+
+    try:
+        fmts = validate_formats(formats.split(","))
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/]")
+        raise typer.Exit(code=1) from exc
+
+    if rank_images:
+        console.print("[yellow]--rank-images[/] (vision ranking) arrives in Phase 11; ignoring.")
 
     if dry_run:
-        console.print("[yellow]--dry-run:[/] token/cost estimation arrives in Phase 12.")
+        try:
+            est = estimate_condense(
+                input_file,
+                chunk_tokens=settings.default_chunk_tokens,
+                target_ratio=resolved_ratio,
+            )
+        except (NotImplementedError, ValueError) as exc:
+            console.print(f"[red]{exc}[/]")
+            raise typer.Exit(code=1) from exc
+        table = Table(title="Brevia — dry run estimate", show_header=False)
+        table.add_row("input", str(input_file))
+        table.add_row("chapters", str(est.chapters))
+        table.add_row("chunks", str(est.chunks))
+        table.add_row("input tokens (est.)", f"{est.input_tokens:,}")
+        table.add_row("output tokens (est.)", f"{est.estimated_output_tokens:,}")
+        table.add_row("target ratio", f"{resolved_ratio:.2f}")
+        console.print(table)
+        console.print("[dim]No LLM was called. Cost estimation arrives in Phase 12.[/]")
         return
-    console.print("[yellow]Pipeline not implemented yet[/] — building it phase by phase.")
+
+    if api_endpoint and provider.lower() == "ollama":
+        settings.ollama_endpoint = api_endpoint
+    try:
+        llm = get_provider(provider, settings)
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/]")
+        raise typer.Exit(code=1) from exc
+
+    console.print(
+        f"[bold]Condensing[/] {input_file.name} → {', '.join(fmts)} "
+        f"(provider={provider}, model={resolved_model}, ratio={resolved_ratio:.2f})"
+    )
+    try:
+        result = asyncio.run(
+            condense_book(
+                input_path=input_file,
+                out_dir=out,
+                formats=fmts,
+                provider=llm,
+                model=resolved_model,
+                target_ratio=resolved_ratio,
+                chunk_tokens=settings.default_chunk_tokens,
+                resume=resume,
+                translate_to=translate_to,
+                log=lambda msg: console.print(f"[dim]· {msg}[/]"),
+            )
+        )
+    except (NotImplementedError, ValueError) as exc:
+        console.print(f"[red]{exc}[/]")
+        raise typer.Exit(code=1) from exc
+
+    table = Table(title="Done", show_header=False)
+    for path in result.output_files:
+        table.add_row("output", str(path))
+    table.add_row("input tokens", f"{result.input_tokens:,}")
+    table.add_row("output tokens", f"{result.output_tokens:,}")
+    ratio = result.output_tokens / result.input_tokens if result.input_tokens else 0.0
+    table.add_row("achieved ratio", f"{ratio:.2f}")
+    if resume and result.chunks_reused:
+        table.add_row("chunks reused", f"{result.chunks_reused}/{result.chunks_total}")
+    console.print(table)
+    for warning in result.warnings:
+        console.print(f"[yellow]⚠ {warning}[/]")
 
 
 if __name__ == "__main__":
