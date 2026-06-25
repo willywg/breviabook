@@ -83,15 +83,15 @@ uv run brevia condense book.epub --formats epub,pdf,md --out ./out/
 # Estimate tokens + cost first, without calling the LLM
 uv run brevia condense book.epub --dry-run
 
-# Condense + translate to Spanish with a cloud model (disable thinking to save ~3-4x)
+# Condense + translate to Spanish with a cloud model (Gemini thinking is off by default)
 uv run brevia condense book.epub \
-  --provider gemini --model gemini-3-flash-preview --reasoning-effort disable \
+  --provider gemini --model gemini-3-flash-preview \
   --translate-to Spanish --source-lang English --glossary glossary.json \
   --formats epub,md --out ./out/
 
 # Drop decorative images with a vision model, and resume if interrupted
 uv run brevia condense book.pdf --provider gemini --model gemini-3-flash-preview \
-  --reasoning-effort disable --rank-images --resume --out ./out/
+  --rank-images --resume --out ./out/
 ```
 
 ## CLI
@@ -118,19 +118,21 @@ brevia condense INPUT.{epub,pdf} [options]
 
 ## Cost & reasoning models
 
-Some cloud models "think" before answering. On `gemini-3-flash-preview` this is **on by
-default** and, for condensation/translation (which are rewriting tasks, not reasoning tasks),
-it is pure waste — on a real run ~94% of output tokens were discarded reasoning, billed as
-output. Pass **`--reasoning-effort disable`** to turn it off:
+Some cloud models "think" before answering. For condensation/translation — rewriting tasks,
+not reasoning tasks — that thinking is pure waste: on a real run ~94% of output tokens were
+discarded reasoning, billed as output. **Brevia therefore disables thinking by default** for
+providers that have it on (Gemini). To restore a model's native thinking, pass
+`--reasoning-effort auto` (or set `low`/`medium`/`high` explicitly).
 
 | Run (Introducing Go, EPUB → Spanish) | Cost | Output tokens | Quality |
 |---|---|---|---|
-| thinking on (default) | $0.78 | 243k | excellent |
-| `--reasoning-effort disable` | **$0.22** | 55k | **excellent (identical)** |
+| thinking on (`--reasoning-effort auto`) | $0.78 | 243k | excellent |
+| **default (thinking disabled)** | **$0.22** | 55k | **excellent (identical)** |
 
-Always estimate first with `--dry-run` (no LLM call), and remember the dry-run does **not**
-include reasoning tokens — so if you leave thinking on, the real cost can be several times the
-estimate. Pricing for `gemini-3-flash-preview`: ~$0.50 / 1M input, ~$3.00 / 1M output.
+Estimate first with `--dry-run` (no LLM call). Note the dry-run assumes no reasoning tokens —
+which matches the default; if you re-enable thinking with `--reasoning-effort auto`, the real
+cost can be several times the estimate. Pricing for `gemini-3-flash-preview`: ~$0.50 / 1M
+input, ~$3.00 / 1M output.
 
 ## Configuration (`.env`)
 

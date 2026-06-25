@@ -62,6 +62,30 @@ def test_ollama_endpoint_override() -> None:
     assert provider.endpoint == "http://host:9999"
 
 
+def test_gemini_defaults_to_thinking_disabled() -> None:
+    settings = Settings(gemini_api_key="g")
+    provider = get_provider("gemini", settings)
+    assert provider.extra_opts["reasoning_effort"] == "disable"  # type: ignore[attr-defined]
+
+
+def test_reasoning_effort_auto_keeps_native_thinking() -> None:
+    settings = Settings(gemini_api_key="g")
+    provider = get_provider("gemini", settings, reasoning_effort="auto")
+    assert "reasoning_effort" not in provider.extra_opts  # type: ignore[attr-defined]
+
+
+def test_explicit_reasoning_effort_overrides_default() -> None:
+    settings = Settings(gemini_api_key="g")
+    provider = get_provider("gemini", settings, reasoning_effort="high")
+    assert provider.extra_opts["reasoning_effort"] == "high"  # type: ignore[attr-defined]
+
+
+def test_openai_has_no_default_reasoning_effort() -> None:
+    settings = Settings(openai_api_key="k")
+    provider = get_provider("openai", settings)
+    assert "reasoning_effort" not in provider.extra_opts  # type: ignore[attr-defined]
+
+
 def test_mock_provider_satisfies_protocol() -> None:
     provider = MockProvider()
     assert isinstance(provider, LLMProvider)

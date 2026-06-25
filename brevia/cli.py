@@ -63,8 +63,8 @@ def condense(
     reasoning_effort: Annotated[
         str | None,
         typer.Option(
-            help="Reasoning/thinking budget for reasoning models: disable|low|medium|high "
-            "(disable is cheapest; recommended for gemini-3 condensation)"
+            help="Thinking budget for reasoning models: auto|disable|low|medium|high "
+            "(Gemini defaults to 'disable' to avoid wasted cost; pass 'auto' to keep thinking)"
         ),
     ] = None,
     dry_run: Annotated[bool, typer.Option(help="Estimate tokens/cost only, no LLM call")] = False,

@@ -24,6 +24,21 @@ _ENV_VAR = {
     "openrouter": "OPENROUTER_API_KEY",
 }
 
+# Providers whose models "think" by default and bill that reasoning as output tokens. For
+# Brevia's rewriting tasks (condense/translate) thinking adds cost, not quality, so we turn it
+# off by default. Users can pass --reasoning-effort auto to restore the provider's native mode.
+_THINKING_ON_BY_DEFAULT = ("gemini",)
+
+
+def _resolve_reasoning_effort(provider_key: str, requested: str | None) -> str | None:
+    if requested == "auto":
+        return None  # honor the provider's native default (e.g. Gemini dynamic thinking)
+    if requested:
+        return requested
+    if provider_key in _THINKING_ON_BY_DEFAULT:
+        return "disable"
+    return None
+
 
 def _missing_key(provider: str) -> ValueError:
     return ValueError(
@@ -41,17 +56,20 @@ def get_provider(
 ) -> LLMProvider:
     """Return a provider instance for ``name``.
 
-    ``reasoning_effort`` (e.g. ``"disable"``/``"low"``/``"medium"``/``"high"``) controls a
-    reasoning model's thinking budget; it is applied to litellm-backed providers and ignored
-    by providers that do not support it.
+    ``reasoning_effort`` (``"disable"``/``"low"``/``"medium"``/``"high"``, or ``"auto"`` to keep
+    the provider's native default) controls a reasoning model's thinking budget. When left as
+    ``None`` it defaults to ``"disable"`` for providers that think by default (Gemini), since
+    thinking is wasted cost for condensation/translation. Applied only to litellm-backed
+    providers and ignored by providers that do not support it.
 
     Raises:
         ValueError: for an unknown provider or a missing required API key.
     """
     key = name.lower()
     provider = _build(key, settings, api_endpoint)
-    if reasoning_effort and isinstance(provider, LiteLLMProvider):
-        provider.extra_opts["reasoning_effort"] = reasoning_effort
+    effort = _resolve_reasoning_effort(key, reasoning_effort)
+    if effort and isinstance(provider, LiteLLMProvider):
+        provider.extra_opts["reasoning_effort"] = effort
     return provider
 
 
