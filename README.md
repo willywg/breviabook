@@ -26,10 +26,22 @@ can deliver the result in your language (e.g. English → Spanish) in one go.
   (Strategy A); optional **vision ranking** (`--rank-images`) drops decorative images and
   improves captions.
 - **Integrated translation** — translates the *already-condensed* book (much cheaper) with an
-  optional glossary for consistent terminology; code stays untranslated.
+  optional glossary for consistent terminology; code stays untranslated. Runs in resilient
+  batches: a malformed model response retries and falls back to the source text instead of
+  crashing the run.
 - **Three outputs** — EPUB (our own builder), PDF (weasyprint), Markdown.
-- **Resumable** — `--resume` continues an interrupted job from a checkpoint.
-- **Dry-run + cost** — `--dry-run` estimates tokens and approximate cost without calling the LLM.
+- **Live TUI** — a banner plus per-phase progress bars (parse → condense → synthesize →
+  translate → render) and a usage panel that ticks token/cost totals in real time. Degrades to
+  plain text when output is piped.
+- **Cost control for reasoning models** — `--reasoning-effort disable` turns off "thinking" on
+  models like `gemini-3-flash-preview`, which otherwise spend most output tokens on discarded
+  reasoning (~3.6× cheaper on a real run, same quality). See [Cost & reasoning models](#cost--reasoning-models).
+- **Compression report** — every run prints how much smaller the result is and an approximate
+  page count (e.g. `~479 → ~149 pages, 69% smaller`).
+- **Resumable** — `--resume` continues an interrupted job from a checkpoint (already-condensed
+  chunks are reused, not re-billed).
+- **Dry-run + cost** — `--dry-run` estimates tokens, pages, compression, and approximate cost
+  without calling the LLM.
 - **Usage report** — every run prints prompt/completion/cached tokens and estimated cost.
 
 ## Install
@@ -47,6 +59,11 @@ Copy `.env.example` to `.env` and set what you need (defaults use local Ollama):
 ```bash
 cp .env.example .env
 ```
+
+> **Run without cloning (uvx):** Brevia is a CLI, so it also runs via `uvx` straight from git —
+> e.g. `uvx --from "brevia[pdf] @ git+https://github.com/USER/brevia" brevia condense …`.
+> A published-to-PyPI `uvx brevia` install is planned (pending a dependency-extras split so
+> EPUB/Markdown work with no native libraries).
 
 ### PDF output requirements
 
@@ -66,15 +83,15 @@ uv run brevia condense book.epub --formats epub,pdf,md --out ./out/
 # Estimate tokens + cost first, without calling the LLM
 uv run brevia condense book.epub --dry-run
 
-# Condense + translate to Spanish with a higher-quality cloud model
+# Condense + translate to Spanish with a cloud model (disable thinking to save ~3-4x)
 uv run brevia condense book.epub \
-  --provider gemini --model gemini-3-flash-preview \
+  --provider gemini --model gemini-3-flash-preview --reasoning-effort disable \
   --translate-to Spanish --source-lang English --glossary glossary.json \
   --formats epub,md --out ./out/
 
 # Drop decorative images with a vision model, and resume if interrupted
 uv run brevia condense book.pdf --provider gemini --model gemini-3-flash-preview \
-  --rank-images --resume --out ./out/
+  --reasoning-effort disable --rank-images --resume --out ./out/
 ```
 
 ## CLI
@@ -91,11 +108,29 @@ brevia condense INPUT.{epub,pdf} [options]
   --source-lang     source language (optional hint)
   --glossary        glossary JSON {source_term: target_term}
   --rank-images     use a vision model to score/drop images
+  --reasoning-effort  disable | low | medium | high  (thinking budget for reasoning models;
+                      "disable" is cheapest — recommended for gemini-3 condensation)
   --manual-toc      manual TOC JSON for PDFs without an outline
   --out             output directory                              (default: ./output)
   --resume          resume from checkpoint
-  --dry-run         estimate tokens/cost only, no LLM call
+  --dry-run         estimate tokens/cost/pages only, no LLM call
 ```
+
+## Cost & reasoning models
+
+Some cloud models "think" before answering. On `gemini-3-flash-preview` this is **on by
+default** and, for condensation/translation (which are rewriting tasks, not reasoning tasks),
+it is pure waste — on a real run ~94% of output tokens were discarded reasoning, billed as
+output. Pass **`--reasoning-effort disable`** to turn it off:
+
+| Run (Introducing Go, EPUB → Spanish) | Cost | Output tokens | Quality |
+|---|---|---|---|
+| thinking on (default) | $0.78 | 243k | excellent |
+| `--reasoning-effort disable` | **$0.22** | 55k | **excellent (identical)** |
+
+Always estimate first with `--dry-run` (no LLM call), and remember the dry-run does **not**
+include reasoning tokens — so if you leave thinking on, the real cost can be several times the
+estimate. Pricing for `gemini-3-flash-preview`: ~$0.50 / 1M input, ~$3.00 / 1M output.
 
 ## Configuration (`.env`)
 
