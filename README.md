@@ -46,25 +46,44 @@ can deliver the result in your language (e.g. English → Spanish) in one go.
 
 ## Install
 
-Requires **Python 3.11+** and [uv](https://docs.astral.sh/uv/).
+Requires **Python 3.11+** and [uv](https://docs.astral.sh/uv/). EPUB and Markdown output need
+no system libraries; PDF output adds the optional `[pdf]` extra (see
+[PDF output requirements](#pdf-output-requirements)). Set credentials before running cloud
+providers — see [Configuration](#configuration).
+
+### Run with uvx (no install)
+
+Run the latest straight from GitHub — no clone, no virtualenv:
+
+```bash
+# EPUB + Markdown (nothing else needed)
+uvx --from "git+https://github.com/willywg/breviabook" breviabook condense book.epub --formats epub,md
+
+# with PDF output
+uvx --from "breviabook[pdf] @ git+https://github.com/willywg/breviabook" breviabook condense book.epub
+```
+
+Once published to PyPI this shortens to `uvx breviabook condense book.epub` (and
+`uvx "breviabook[pdf]" …` for PDF output).
+
+### Install the command
+
+```bash
+uv tool install "git+https://github.com/willywg/breviabook"   # append [pdf] for PDF output
+breviabook condense book.epub --out ./out/                     # now on your PATH
+```
+
+(After PyPI: `uv tool install breviabook`.)
+
+### From source (development)
 
 ```bash
 git clone https://github.com/willywg/breviabook.git
 cd breviabook
-uv sync                # EPUB + Markdown — no system libraries needed
-uv sync --extra pdf    # add PDF output (needs the system libs below)
+uv sync                # EPUB + Markdown
+uv sync --extra pdf    # add PDF output
+uv run breviabook --help
 ```
-
-Copy `.env.example` to `.env` and set what you need (defaults use local Ollama):
-
-```bash
-cp .env.example .env
-```
-
-> **Run without cloning (uvx):** BreviaBook is a CLI, so it also runs via `uvx` straight from git.
-> EPUB + Markdown need nothing extra:
-> `uvx --from "git+https://github.com/willywg/breviabook" breviabook condense book.epub --formats epub,md`
-> — add PDF with `"breviabook[pdf] @ git+…"`. Once published, this becomes `uvx breviabook`.
 
 ### PDF output requirements
 
@@ -109,8 +128,8 @@ breviabook condense INPUT.{epub,pdf} [options]
   --source-lang     source language (optional hint)
   --glossary        glossary JSON {source_term: target_term}
   --rank-images     use a vision model to score/drop images
-  --reasoning-effort  disable | low | medium | high  (thinking budget for reasoning models;
-                      "disable" is cheapest — recommended for gemini-3 condensation)
+  --reasoning-effort  auto | disable | low | medium | high  (thinking budget; Gemini defaults
+                      to "disable" to save cost — pass "auto" to keep native thinking)
   --manual-toc      manual TOC JSON for PDFs without an outline
   --out             output directory                              (default: ./output)
   --resume          resume from checkpoint
@@ -135,10 +154,29 @@ which matches the default; if you re-enable thinking with `--reasoning-effort au
 cost can be several times the estimate. Pricing for `gemini-3-flash-preview`: ~$0.50 / 1M
 input, ~$3.00 / 1M output.
 
-## Configuration (`.env`)
+## Configuration
+
+BreviaBook reads settings from **environment variables** or a **`.env` file in the directory you
+run from**. Environment variables take precedence. Local Ollama needs no key, so the defaults
+work out of the box; cloud providers need an API key. CLI flags (`--provider`, `--model`, …)
+override both.
+
+```bash
+# Option A — environment variable (best for `uvx`; works from any directory)
+export GEMINI_API_KEY="your-key"
+uvx breviabook condense book.epub --provider gemini --model gemini-3-flash-preview --translate-to Spanish
+
+# one-off, inline (no export)
+GEMINI_API_KEY="your-key" uvx breviabook condense book.epub --provider gemini
+
+# Option B — a .env file in the current directory (from source: `cp .env.example .env`)
+printf 'GEMINI_API_KEY=your-key\n' > .env
+```
+
+All recognized variables (every one optional; names are case-insensitive):
 
 ```
-LLM_PROVIDER=ollama
+LLM_PROVIDER=ollama                       # ollama | openai | gemini | openrouter
 OLLAMA_ENDPOINT=http://localhost:11434
 DEFAULT_MODEL=gemma4:e4b
 
@@ -150,6 +188,9 @@ DEFAULT_TARGET_RATIO=0.30
 DEFAULT_CHUNK_TOKENS=2000
 IMAGE_STRATEGY=keep_referenced   # keep_referenced | vision_ranked
 ```
+
+Keys are sent only to the selected provider's endpoint, never elsewhere. `.env` is gitignored —
+don't commit credentials.
 
 ## How it works
 
