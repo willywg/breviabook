@@ -242,7 +242,6 @@ wheels = [
 
 [[package]]
 name = "breviabook"
-version = "0.0.1"
 source = { editable = "." }
 dependencies = [
     { name = "beautifulsoup4" },

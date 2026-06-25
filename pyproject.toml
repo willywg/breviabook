@@ -1,6 +1,6 @@
 [project]
 name = "breviabook"
-version = "0.0.1"
+dynamic = ["version"]
 description = "Condense large technical ebooks (EPUB/PDF) preserving code and diagrams, optionally translating in the same pass."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -9,7 +9,7 @@ license-files = ["LICENSE", "NOTICE"]
 authors = [{ name = "William Wong Garay", email = "willywg@gmail.com" }]
 keywords = ["ebook", "epub", "pdf", "summarization", "llm", "ollama", "translation"]
 classifiers = [
-    "Development Status :: 2 - Pre-Alpha",
+    "Development Status :: 4 - Beta",
     "Environment :: Console",
     "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3.11",
@@ -64,6 +64,9 @@ dev = [
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+path = "breviabook/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["breviabook"]

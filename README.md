@@ -49,7 +49,7 @@ can deliver the result in your language (e.g. English → Spanish) in one go.
 Requires **Python 3.11+** and [uv](https://docs.astral.sh/uv/).
 
 ```bash
-git clone https://github.com/willywg/breviabook.git   # adjust to the final repo URL
+git clone https://github.com/willywg/breviabook.git
 cd breviabook
 uv sync                # EPUB + Markdown — no system libraries needed
 uv sync --extra pdf    # add PDF output (needs the system libs below)
@@ -63,8 +63,8 @@ cp .env.example .env
 
 > **Run without cloning (uvx):** BreviaBook is a CLI, so it also runs via `uvx` straight from git.
 > EPUB + Markdown need nothing extra:
-> `uvx --from "git+https://github.com/USER/breviabook" breviabook condense book.epub --formats epub,md`
-> — add PDF with `"breviabook[pdf] @ git+…"`. A published `uvx breviabook` (PyPI) is planned.
+> `uvx --from "git+https://github.com/willywg/breviabook" breviabook condense book.epub --formats epub,md`
+> — add PDF with `"breviabook[pdf] @ git+…"`. Once published, this becomes `uvx breviabook`.
 
 ### PDF output requirements
 

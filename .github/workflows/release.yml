@@ -1,0 +1,51 @@
+name: release
+
+# Publish to PyPI on a version tag (e.g. v0.1.0) via PyPI Trusted Publishing (OIDC) — no
+# API tokens stored. One-time setup on PyPI: add a "trusted publisher" for project
+# "breviabook" pointing at owner=willywg, repo=breviabook, workflow=release.yml,
+# environment=pypi. See https://docs.pypi.org/trusted-publishers/
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Verify tag matches package version
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG="$(uv run python -c 'import breviabook; print(breviabook.__version__)')"
+          echo "tag=$TAG package=$PKG"
+          test "$TAG" = "$PKG" || { echo "::error::tag v$TAG != package version $PKG"; exit 1; }
+
+      - name: Build sdist and wheel
+        run: uv build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/breviabook
+    permissions:
+      id-token: write # required for Trusted Publishing
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
