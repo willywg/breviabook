@@ -53,6 +53,21 @@ def _texts(*pairs: str) -> str:
     return json.dumps({"texts": {str(i + 1): t for i, t in enumerate(pairs)}})
 
 
+async def test_smoothing_parse_failure_keeps_condensed_text() -> None:
+    # Two chunks force a smoothing call; if it keeps returning malformed JSON, fall back to
+    # the concatenated condensed blocks instead of crashing.
+    chunks = [
+        _cc([ParagraphBlock(text="intro a")], input_tokens=40),
+        _cc([ParagraphBlock(text="outro b")], input_tokens=40),
+    ]
+    provider = QueueProvider(["not json"])
+    chapters = await Synthesizer(provider, "m", max_retries=3).synthesize(chunks)
+    assert provider.calls == 3  # retried before giving up
+    assert chapters[0].trim_passes == 0
+    texts = [b.text for b in chapters[0].blocks]  # type: ignore[union-attr]
+    assert texts == ["intro a", "outro b"]  # original condensed text preserved
+
+
 async def test_single_small_chapter_skips_synthesis() -> None:
     # One chunk already within the (floored) budget → no LLM call at all (Phase 12 guard).
     chunk = _cc([ParagraphBlock(text="a short paragraph")], input_tokens=50)

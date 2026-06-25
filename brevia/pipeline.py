@@ -214,6 +214,11 @@ async def condense_book(
         for cc in condensed
         if cc.output_longer_than_input
     )
+    warnings.extend(
+        f"chunk {cc.id}: condense failed after retries; kept original text"
+        for cc in condensed
+        if cc.condense_failed
+    )
 
     n_chapters = len({cc.chapter_index for cc in condensed})
     reporter.phase("Synthesize", total=n_chapters)

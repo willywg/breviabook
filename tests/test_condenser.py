@@ -112,10 +112,47 @@ async def test_json_in_fences_is_tolerated() -> None:
     assert any(getattr(b, "text", None) == "ok" for b in cc.blocks)
 
 
-async def test_invalid_json_raises() -> None:
-    chunk = _chunk([ParagraphBlock(text="filler")])
+async def test_invalid_json_keeps_chunk_uncondensed_without_crashing() -> None:
+    # Persistent malformed JSON must not crash the run: keep the original text, flag it,
+    # and retry max_retries times first.
+    chunk = _chunk([ParagraphBlock(text="filler text that should survive")])
+    provider = ScriptedProvider("not json at all")
+    cc = await Condenser(provider, "m", max_retries=3).condense_chunk(chunk)
+    assert cc.condense_failed is True
+    assert provider.calls == 3  # retried before giving up
+    assert any(getattr(b, "text", None) == "filler text that should survive" for b in cc.blocks)
+
+
+async def test_low_level_parse_still_raises() -> None:
+    from brevia.condense.condenser import _parse_response
+
     with pytest.raises(CondenseError):
-        await Condenser(ScriptedProvider("not json at all"), "m").condense_chunk(chunk)
+        _parse_response("not json at all")
+
+
+class FlakyProvider:
+    """Returns bad JSON for the first N calls, then a valid reply."""
+
+    name = "flaky"
+
+    def __init__(self, bad: int, good_reply: str) -> None:
+        self.bad = bad
+        self.good_reply = good_reply
+        self.calls = 0
+
+    async def generate(self, messages: list[Message], model: str, **opts: object) -> str:
+        self.calls += 1
+        return "broken" if self.calls <= self.bad else self.good_reply
+
+
+async def test_retry_recovers_from_transient_bad_json() -> None:
+    chunk = _chunk([ParagraphBlock(text="please condense me")])
+    good = json.dumps({"texts": {"1": "condensed ok"}, "essential_images": []})
+    provider = FlakyProvider(bad=1, good_reply=good)
+    cc = await Condenser(provider, "m", max_retries=3).condense_chunk(chunk)
+    assert cc.condense_failed is False
+    assert provider.calls == 2  # one failure, then success
+    assert any(getattr(b, "text", None) == "condensed ok" for b in cc.blocks)
 
 
 async def test_checkpoint_resume_skips_provider(tmp_path: Path) -> None:

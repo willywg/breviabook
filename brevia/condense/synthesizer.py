@@ -14,6 +14,7 @@ from itertools import groupby
 from pydantic import BaseModel, Field
 
 from brevia.condense.common import (
+    CondenseError,
     Segment,
     extract_json,
     run_text,
@@ -53,12 +54,16 @@ class Synthesizer:
         tolerance: float = 0.15,
         max_trim_passes: int = 2,
         min_target_tokens: int = 100,
+        max_retries: int = 3,
     ) -> None:
         self.provider = provider
         self.model = model
         self.target_ratio = target_ratio
         self.tolerance = tolerance
         self.max_trim_passes = max_trim_passes
+        # Retry a malformed-JSON pass a few times; if it keeps failing, keep the current text
+        # instead of crashing the run.
+        self.max_retries = max_retries
         # Don't chase a target below this — tiny chapters can't be meaningfully compressed,
         # and doing so triggers pointless trim passes (wasted LLM calls).
         self.min_target_tokens = min_target_tokens
@@ -95,7 +100,11 @@ class Synthesizer:
         if len(chunks) == 1 and current_tokens <= target_tokens:
             return self._result(first, blocks, kept_image_ids, input_tokens, target_tokens, 0)
 
-        blocks = await self._synth_pass(segments, target_tokens, smooth=True)
+        smoothed = await self._synth_pass(segments, target_tokens, smooth=True)
+        if smoothed is None:
+            # Smoothing kept returning malformed JSON: keep the concatenated condensed text.
+            return self._result(first, blocks, kept_image_ids, input_tokens, target_tokens, 0)
+        blocks = smoothed
         output_tokens = sum(block_tokens(b) for b in blocks)
 
         passes = 0
@@ -104,20 +113,29 @@ class Synthesizer:
             segments = segment_blocks(blocks)
             if not any(s.kind == "text" for s in segments):
                 break
+            trimmed = await self._synth_pass(segments, target_tokens, smooth=False)
+            if trimmed is None:
+                break  # parse failed on this trim pass; keep what we have
             passes += 1
-            blocks = await self._synth_pass(segments, target_tokens, smooth=False)
+            blocks = trimmed
             output_tokens = sum(block_tokens(b) for b in blocks)
 
         return self._result(first, blocks, kept_image_ids, input_tokens, target_tokens, passes)
 
     async def _synth_pass(
         self, segments: list[Segment], target_tokens: int, *, smooth: bool
-    ) -> list[Block]:
+    ) -> list[Block] | None:
+        """Run one synthesis pass; return ``None`` if the response can't be parsed after retries."""
         body = _serialize(segments)
         messages = build_synthesize_messages(body, target_tokens, smooth=smooth)
-        raw = await self.provider.generate(messages, self.model)
-        texts = _parse_texts(raw)
-        return _reassemble(segments, texts)
+        for _attempt in range(self.max_retries):
+            raw = await self.provider.generate(messages, self.model)
+            try:
+                texts = _parse_texts(raw)
+            except CondenseError:
+                continue
+            return _reassemble(segments, texts)
+        return None
 
     def _result(
         self,

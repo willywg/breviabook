@@ -53,15 +53,26 @@ class CondensedChunk(BaseModel):
     input_tokens: int = 0
     output_tokens: int = 0
     output_longer_than_input: bool = False
+    condense_failed: bool = False  # parse kept failing → kept the chunk uncondensed
 
 
 class Condenser:
     """Condenses chunks via an :class:`~brevia.llm.base.LLMProvider`."""
 
-    def __init__(self, provider: LLMProvider, model: str, target_ratio: float = 0.30) -> None:
+    def __init__(
+        self,
+        provider: LLMProvider,
+        model: str,
+        target_ratio: float = 0.30,
+        *,
+        max_retries: int = 3,
+    ) -> None:
         self.provider = provider
         self.model = model
         self.target_ratio = target_ratio
+        # Models occasionally emit malformed JSON (more so with thinking disabled). Retry a
+        # few times, then keep the chunk uncondensed rather than crash the whole book.
+        self.max_retries = max_retries
 
     async def condense(
         self,
@@ -91,9 +102,17 @@ class Condenser:
 
         body, image_ids = _serialize(segments)
         messages = build_condense_messages(body, self.target_ratio, image_ids)
-        raw = await self.provider.generate(messages, self.model)
-        texts, essential = _parse_response(raw)
-        return self._reassemble(chunk, segments, texts, essential)
+        for _attempt in range(self.max_retries):
+            raw = await self.provider.generate(messages, self.model)
+            try:
+                texts, essential = _parse_response(raw)
+            except CondenseError:
+                continue  # retry with a fresh generation
+            return self._reassemble(chunk, segments, texts, essential)
+        # All retries failed to parse: keep the chunk uncondensed and flag it.
+        cc = self._passthrough(chunk, segments)
+        cc.condense_failed = True
+        return cc
 
     def _reassemble(
         self,
