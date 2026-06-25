@@ -71,12 +71,20 @@ class Translator:
         *,
         source_lang: str | None = None,
         glossary: Glossary | None = None,
+        max_units_per_batch: int = 40,
+        max_retries: int = 2,
     ) -> None:
         self.provider = provider
         self.model = model
         self.target_lang = target_lang
         self.source_lang = source_lang
         self.glossary = glossary
+        # Translate a chapter in batches: one giant JSON per chapter is fragile (a single
+        # malformed string from the model fails the whole chapter). Smaller batches isolate
+        # failures, and a failed batch falls back to the source text instead of crashing.
+        self.max_units_per_batch = max_units_per_batch
+        self.max_retries = max_retries
+        self.untranslated_units = 0  # segments left in the source language after fallback
 
     async def translate_document(
         self,
@@ -115,7 +123,7 @@ class Translator:
         if not units:
             return chapter
 
-        translations = await self._translate_units(units)
+        translations = await self._translate_batched(units)
         new_blocks: list[Block] = []
         for kind, block, ref in plan:
             if kind == "text" and isinstance(ref, str):
@@ -133,6 +141,28 @@ class Translator:
         if title_uid is not None and chapter.title is not None:
             new_title = translations.get(title_uid, chapter.title)
         return Chapter(title=new_title, blocks=new_blocks)
+
+    async def _translate_batched(self, units: dict[str, str]) -> dict[str, str]:
+        """Translate units in bounded batches; a batch that keeps failing is left untranslated."""
+        items = list(units.items())
+        out: dict[str, str] = {}
+        for start in range(0, len(items), self.max_units_per_batch):
+            batch = dict(items[start : start + self.max_units_per_batch])
+            translated = await self._translate_batch_resilient(batch)
+            out.update(translated)
+            self.untranslated_units += len(batch) - len(translated)
+        return out
+
+    async def _translate_batch_resilient(self, batch: dict[str, str]) -> dict[str, str]:
+        last_error: TranslateError | None = None
+        for _attempt in range(self.max_retries):
+            try:
+                return await self._translate_units(batch)
+            except TranslateError as exc:
+                last_error = exc
+        # Give up on this batch: callers fall back to the original text for missing ids.
+        assert last_error is not None
+        return {}
 
     async def _translate_units(self, units: dict[str, str]) -> dict[str, str]:
         messages = build_translate_messages(

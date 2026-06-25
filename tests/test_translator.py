@@ -107,10 +107,46 @@ def test_build_messages_includes_source_lang() -> None:
     assert "from English to Spanish" in messages[1]["content"]
 
 
-async def test_invalid_json_raises_translate_error() -> None:
-    chapter = Chapter(blocks=[ParagraphBlock(text="x")])
+async def test_invalid_json_falls_back_to_source_without_crashing() -> None:
+    # A malformed model response must not crash the run: the segment stays in the source
+    # language and is counted, rather than raising (resilient batching).
+    chapter = Chapter(blocks=[ParagraphBlock(text="keepme")])
+    provider = ScriptedProvider("not json")
+    translator = Translator(provider, "m", "Spanish", max_retries=2)
+    out = await translator.translate_chapter(chapter)
+    assert out.blocks[0].text == "keepme"  # type: ignore[union-attr]
+    assert translator.untranslated_units == 1
+    assert provider.calls == 2  # retried before giving up
+
+
+async def test_translate_units_still_raises_on_invalid_json() -> None:
+    # The low-level call still surfaces the error; resilience lives in the batching layer.
     with pytest.raises(TranslateError):
-        await Translator(ScriptedProvider("not json"), "m", "Spanish").translate_chapter(chapter)
+        await Translator(ScriptedProvider("not json"), "m", "Spanish")._translate_units({"1": "x"})
+
+
+class BatchCountingProvider:
+    name = "batch"
+
+    def __init__(self) -> None:
+        self.batch_sizes: list[int] = []
+
+    async def generate(self, messages: list[Message], model: str, **opts: object) -> str:
+        content = messages[-1]["content"]
+        ids = [ln for ln in content.splitlines() if ln.strip().startswith("[")]
+        self.batch_sizes.append(len(ids))
+        return _translations({str(i): f"t{i}" for i in range(1, 200)})
+
+
+async def test_units_are_translated_in_bounded_batches() -> None:
+    chapter = Chapter(blocks=[ParagraphBlock(text=f"p{i}") for i in range(100)])
+    provider = BatchCountingProvider()
+    out = await Translator(provider, "m", "Spanish", max_units_per_batch=40).translate_chapter(
+        chapter
+    )
+    assert len(provider.batch_sizes) == 3  # 100 units -> 40 + 40 + 20
+    assert max(provider.batch_sizes) <= 40
+    assert out.blocks[0].text == "t1"  # type: ignore[union-attr]
 
 
 async def test_translate_document_keeps_images_and_metadata() -> None:

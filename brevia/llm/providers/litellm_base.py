@@ -60,6 +60,9 @@ class LiteLLMProvider:
         self.max_retries = max_retries
         self._completer = completer
         self.usage = Usage()
+        # Default options merged into every call (e.g. reasoning_effort to control thinking).
+        # Per-call opts passed to generate() override these.
+        self.extra_opts: dict[str, object] = {}
 
     async def _acompletion(self, **kwargs: Any) -> Any:
         if self._completer is not None:
@@ -69,13 +72,15 @@ class LiteLLMProvider:
         return await litellm.acompletion(**kwargs)
 
     async def _run(self, messages: list[Any], model: str, **opts: object) -> str:
+        merged = {**self.extra_opts, **opts}
+
         async def call(key: str | None) -> str:
             response = await self._acompletion(
                 model=f"{self.route}/{model}",
                 messages=messages,
                 api_key=key,
                 api_base=self.base_url,
-                **opts,
+                **merged,
             )
             prompt, completion, cached = extract_usage(response)
             cost = completion_cost(response) if self._completer is None else 0.0

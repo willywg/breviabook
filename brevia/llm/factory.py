@@ -12,6 +12,7 @@ from brevia.config import Settings
 from brevia.llm.base import LLMProvider
 from brevia.llm.key_pool import KeyPool
 from brevia.llm.providers.gemini import GeminiProvider
+from brevia.llm.providers.litellm_base import LiteLLMProvider
 from brevia.llm.providers.ollama import OllamaProvider
 from brevia.llm.providers.openai import OpenAIProvider
 from brevia.llm.providers.openrouter import OpenRouterProvider
@@ -31,13 +32,30 @@ def _missing_key(provider: str) -> ValueError:
     )
 
 
-def get_provider(name: str, settings: Settings, *, api_endpoint: str | None = None) -> LLMProvider:
+def get_provider(
+    name: str,
+    settings: Settings,
+    *,
+    api_endpoint: str | None = None,
+    reasoning_effort: str | None = None,
+) -> LLMProvider:
     """Return a provider instance for ``name``.
+
+    ``reasoning_effort`` (e.g. ``"disable"``/``"low"``/``"medium"``/``"high"``) controls a
+    reasoning model's thinking budget; it is applied to litellm-backed providers and ignored
+    by providers that do not support it.
 
     Raises:
         ValueError: for an unknown provider or a missing required API key.
     """
     key = name.lower()
+    provider = _build(key, settings, api_endpoint)
+    if reasoning_effort and isinstance(provider, LiteLLMProvider):
+        provider.extra_opts["reasoning_effort"] = reasoning_effort
+    return provider
+
+
+def _build(key: str, settings: Settings, api_endpoint: str | None) -> LLMProvider:
     if key == "ollama":
         return OllamaProvider(endpoint=api_endpoint or settings.ollama_endpoint)
     if key == "openai":
@@ -58,5 +76,5 @@ def get_provider(name: str, settings: Settings, *, api_endpoint: str | None = No
             raise _missing_key("openrouter")
         return OpenRouterProvider(KeyPool(keys))
     raise ValueError(
-        f"Unknown or unsupported provider {name!r}. Supported: {', '.join(_SUPPORTED)}."
+        f"Unknown or unsupported provider {key!r}. Supported: {', '.join(_SUPPORTED)}."
     )

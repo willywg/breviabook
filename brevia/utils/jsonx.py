@@ -21,7 +21,9 @@ def extract_json_object(text: str) -> dict[str, object]:
     if start == -1 or end == -1 or end < start:
         raise ValueError("No JSON object found in model response")
     try:
-        obj = json.loads(text[start : end + 1])
+        # strict=False tolerates literal control chars (newlines/tabs) inside strings, which
+        # models often emit unescaped.
+        obj = json.loads(text[start : end + 1], strict=False)
     except json.JSONDecodeError as exc:
         raise ValueError(f"Invalid JSON in model response: {exc}") from exc
     if not isinstance(obj, dict):

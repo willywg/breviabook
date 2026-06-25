@@ -60,6 +60,13 @@ def condense(
     ] = None,
     out: Annotated[Path, typer.Option(help="Output directory")] = Path("./output"),
     resume: Annotated[bool, typer.Option(help="Resume from checkpoint")] = False,
+    reasoning_effort: Annotated[
+        str | None,
+        typer.Option(
+            help="Reasoning/thinking budget for reasoning models: disable|low|medium|high "
+            "(disable is cheapest; recommended for gemini-3 condensation)"
+        ),
+    ] = None,
     dry_run: Annotated[bool, typer.Option(help="Estimate tokens/cost only, no LLM call")] = False,
 ) -> None:
     """Condense INPUT into a shorter version (EPUB/PDF/MD), optionally translated."""
@@ -126,7 +133,9 @@ def condense(
         return
 
     try:
-        llm = get_provider(provider, settings, api_endpoint=api_endpoint)
+        llm = get_provider(
+            provider, settings, api_endpoint=api_endpoint, reasoning_effort=reasoning_effort
+        )
     except ValueError as exc:
         console.print(f"[red]{exc}[/]")
         raise typer.Exit(code=1) from exc
