@@ -36,7 +36,16 @@ from brevia.utils.tokens import block_tokens
 
 SUPPORTED_FORMATS = ("md", "epub", "pdf")
 
+# Rough page-count heuristic: a printed technical page holds ~1,800 chars ≈ ~450 tokens.
+# Used only for human-friendly "~N pages" reporting, never for any pipeline decision.
+TOKENS_PER_PAGE = 450
+
 Log = Callable[[str], None]
+
+
+def estimate_pages(tokens: int) -> int:
+    """Approximate printed-page count for a token total (for display only)."""
+    return max(1, round(tokens / TOKENS_PER_PAGE))
 
 
 def _noop(_: str) -> None:

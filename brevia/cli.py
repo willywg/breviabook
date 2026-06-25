@@ -19,7 +19,7 @@ from brevia import __version__
 from brevia.config import load_settings
 from brevia.llm.factory import get_provider
 from brevia.parsers.pdf_parser import TocEntry, load_manual_toc
-from brevia.pipeline import condense_book, estimate_condense, validate_formats
+from brevia.pipeline import condense_book, estimate_condense, estimate_pages, validate_formats
 from brevia.translate.glossary import Glossary
 from brevia.ui.banner import print_banner
 from brevia.ui.progress import LogReporter, RunReporter
@@ -121,6 +121,11 @@ def condense(
         table.add_row("chunks", str(est.chunks))
         table.add_row("input tokens", f"{est.input_tokens:,}")
         table.add_row("output tokens (est.)", f"{est.estimated_output_tokens:,}")
+        in_pages = estimate_pages(est.input_tokens)
+        out_pages = estimate_pages(est.estimated_output_tokens)
+        est_ratio = est.estimated_output_tokens / est.input_tokens if est.input_tokens else 0.0
+        table.add_row("approx pages", f"~{in_pages} → ~{out_pages}")
+        table.add_row("compression (est.)", f"{(1 - est_ratio) * 100:.0f}% smaller")
         table.add_row("LLM prompt tokens (est.)", f"{est.estimated_prompt_tokens:,}")
         table.add_row("LLM completion tokens (est.)", f"{est.estimated_completion_tokens:,}")
         table.add_row("target ratio", f"{resolved_ratio:.2f}")
@@ -183,7 +188,10 @@ def condense(
     table.add_row("input tokens", f"{result.input_tokens:,}")
     table.add_row("output tokens", f"{result.output_tokens:,}")
     ratio = result.output_tokens / result.input_tokens if result.input_tokens else 0.0
-    table.add_row("achieved ratio", f"{ratio:.2f}")
+    in_pages = estimate_pages(result.input_tokens)
+    out_pages = estimate_pages(result.output_tokens)
+    table.add_row("approx pages", f"~{in_pages} → ~{out_pages}")
+    table.add_row("compression", f"{(1 - ratio) * 100:.0f}% smaller (ratio {ratio:.2f})")
     if resume and result.chunks_reused:
         table.add_row("chunks reused", f"{result.chunks_reused}/{result.chunks_total}")
     console.print(table)
