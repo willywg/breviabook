@@ -1,6 +1,6 @@
 # PRP: Phase 5 — Hierarchical synthesis + length control
 
-> Product Requirement Prompt for **Brevia**. Source of truth: [docs/ROADMAP.md](../docs/ROADMAP.md) §5, §6, §7.3, §10 (Phase 5).
+> Product Requirement Prompt for **BreviaBook**. Source of truth: [docs/ROADMAP.md](../docs/ROADMAP.md) §5, §6, §7.3, §10 (Phase 5).
 > Operating rules: [CLAUDE.md](../CLAUDE.md). Builds on PRP 004 (condenser).
 
 ## Goal
@@ -19,11 +19,11 @@ budget). Code/tables/images stay intact. Tests use the deterministic mock provid
 ## Scope
 
 **In scope:**
-- `brevia/condense/common.py`: extract shared primitives so condenser + synthesizer don't
+- `breviabook/condense/common.py`: extract shared primitives so condenser + synthesizer don't
   duplicate them — `Segment`, `segment_blocks`, `run_text`, `structural_marker`,
   `split_paragraphs`, `extract_json`, `CondenseError`.
 - Refactor `condense/condenser.py` to use `common.py` (no behavior change).
-- `brevia/condense/synthesizer.py`: `SynthesizedChapter` model + `Synthesizer` with
+- `breviabook/condense/synthesizer.py`: `SynthesizedChapter` model + `Synthesizer` with
   per-chapter synthesis, token budget from original chapter size, and a bounded trim loop.
 - Add `SYNTH_SYSTEM_PROMPT` + `build_synthesize_messages` to `condense/prompts.py`.
 - Tests.
@@ -42,9 +42,9 @@ budget). Code/tables/images stay intact. Tests use the deterministic mock provid
 
 ```yaml
 - docs/ROADMAP.md          # §7.3 two-level hierarchy + length control, §5 step 4
-- brevia/condense/condenser.py  # CondensedChunk (input_tokens, blocks, kept_image_ids)
-- brevia/condense/chunker.py    # for token helpers
-- brevia/utils/tokens.py        # block_tokens
+- breviabook/condense/condenser.py  # CondensedChunk (input_tokens, blocks, kept_image_ids)
+- breviabook/condense/chunker.py    # for token helpers
+- breviabook/utils/tokens.py        # block_tokens
 ```
 
 ## Design
@@ -72,8 +72,8 @@ budget). Code/tables/images stay intact. Tests use the deterministic mock provid
 
 ### New / changed files
 
-- `brevia/condense/common.py` (new), `brevia/condense/synthesizer.py` (new)
-- `brevia/condense/condenser.py` (refactor), `brevia/condense/prompts.py` (add synth prompt)
+- `breviabook/condense/common.py` (new), `breviabook/condense/synthesizer.py` (new)
+- `breviabook/condense/condenser.py` (refactor), `breviabook/condense/prompts.py` (add synth prompt)
 - `tests/test_synthesizer.py` (new)
 
 ## Validation gates (must all pass)
@@ -81,7 +81,7 @@ budget). Code/tables/images stay intact. Tests use the deterministic mock provid
 ```bash
 uv run ruff check .
 uv run ruff format --check .
-uv run mypy --strict brevia
+uv run mypy --strict breviabook
 uv run pytest -q
 uv run pip-licenses --fail-on "GPL"
 ```

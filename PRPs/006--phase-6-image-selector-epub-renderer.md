@@ -1,13 +1,13 @@
 # PRP: Phase 6 — Image selector (Strategy A) + EPUB renderer
 
-> Product Requirement Prompt for **Brevia**. Source of truth: [docs/ROADMAP.md](../docs/ROADMAP.md) §5, §6, §7.1, §10 (Phase 6), §11, §14.
+> Product Requirement Prompt for **BreviaBook**. Source of truth: [docs/ROADMAP.md](../docs/ROADMAP.md) §5, §6, §7.1, §10 (Phase 6), §11, §14.
 > Operating rules: [CLAUDE.md](../CLAUDE.md). Builds on PRP 001 (IR + EPUB parser) and PRP 002 (renderer base).
 
 ## Goal
 
-Two things: (1) `brevia/images/selector.py` — Strategy A image selection (structural: keep an
+Two things: (1) `breviabook/images/selector.py` — Strategy A image selection (structural: keep an
 image iff its anchoring content survives; drop orphan assets and dangling refs). (2)
-`brevia/render/epub_renderer.py` — our own EPUB **builder** (zipfile, no ebooklib) that emits
+`breviabook/render/epub_renderer.py` — our own EPUB **builder** (zipfile, no ebooklib) that emits
 a valid EPUB 3 re-embedding only the kept images. Validate via an IR round-trip: render EPUB
 → parse it back → equivalent document (§11).
 
@@ -21,9 +21,9 @@ a valid EPUB 3 re-embedding only the kept images. Validate via an IR round-trip:
 ## Scope
 
 **In scope:**
-- `brevia/images/selector.py`: `ImageSelector.select(doc) -> SelectionResult` (cleaned
+- `breviabook/images/selector.py`: `ImageSelector.select(doc) -> SelectionResult` (cleaned
   `Document` + kept/dropped id lists). Strategy A only.
-- `brevia/render/epub_renderer.py`: `EpubRenderer` — builds mimetype + `container.xml` +
+- `breviabook/render/epub_renderer.py`: `EpubRenderer` — builds mimetype + `container.xml` +
   `content.opf` (metadata/manifest/spine) + EPUB3 `nav.xhtml` + one XHTML per chapter +
   `images/`. Deterministic output (fixed identifier/timestamp) for testable round-trips.
 - Tests: selector behavior + EPUB round-trip + zip/structure validity.
@@ -42,9 +42,9 @@ a valid EPUB 3 re-embedding only the kept images. Validate via an IR round-trip:
 
 ```yaml
 - docs/ROADMAP.md          # §7.1 Strategy A, §11 round-trip, §6 layout
-- brevia/parsers/epub_parser.py  # the parser we round-trip against
-- brevia/render/base.py    # Renderer Protocol + image_filename()
-- brevia/ir/models.py      # Document/Chapter/Block/ImageAsset
+- breviabook/parsers/epub_parser.py  # the parser we round-trip against
+- breviabook/render/base.py    # Renderer Protocol + image_filename()
+- breviabook/ir/models.py      # Document/Chapter/Block/ImageAsset
 # EPUB3: package.opf needs <meta property="dcterms:modified">; nav.xhtml needs epub:type="toc"
 ```
 
@@ -67,7 +67,7 @@ a valid EPUB 3 re-embedding only the kept images. Validate via an IR round-trip:
 
 ### New / changed files
 
-- `brevia/images/selector.py`, `brevia/render/epub_renderer.py`
+- `breviabook/images/selector.py`, `breviabook/render/epub_renderer.py`
 - `tests/test_image_selector.py`, `tests/test_epub_renderer.py`
 
 ## Validation gates (must all pass)
@@ -75,7 +75,7 @@ a valid EPUB 3 re-embedding only the kept images. Validate via an IR round-trip:
 ```bash
 uv run ruff check .
 uv run ruff format --check .
-uv run mypy --strict brevia
+uv run mypy --strict breviabook
 uv run pytest -q
 uv run pip-licenses --fail-on "GPL"
 ```

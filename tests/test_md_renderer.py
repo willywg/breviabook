@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from brevia.ir.models import (
+from breviabook.ir.models import (
     Chapter,
     Document,
     DocumentMetadata,
@@ -15,8 +15,8 @@ from brevia.ir.models import (
     ListBlock,
     TableBlock,
 )
-from brevia.parsers.epub_parser import EpubParser
-from brevia.render.md_renderer import MarkdownRenderer
+from breviabook.parsers.epub_parser import EpubParser
+from breviabook.render.md_renderer import MarkdownRenderer
 
 FIXTURE = Path(__file__).parent / "fixtures" / "sample.epub"
 
@@ -89,7 +89,7 @@ def test_chapter_title_not_duplicated(rendered: tuple[Path, str]) -> None:
 
 
 def test_synthetic_chapter_title_when_no_leading_heading(tmp_path: Path) -> None:
-    from brevia.ir.models import ParagraphBlock
+    from breviabook.ir.models import ParagraphBlock
 
     doc = Document(
         metadata=DocumentMetadata(title="Book", source_format="epub"),

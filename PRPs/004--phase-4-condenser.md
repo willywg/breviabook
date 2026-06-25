@@ -1,6 +1,6 @@
 # PRP: Phase 4 — Condenser
 
-> Product Requirement Prompt for **Brevia**. Source of truth: [docs/ROADMAP.md](../docs/ROADMAP.md) §5, §6, §7.1, §7.3, §10 (Phase 4), §12.
+> Product Requirement Prompt for **BreviaBook**. Source of truth: [docs/ROADMAP.md](../docs/ROADMAP.md) §5, §6, §7.1, §7.3, §10 (Phase 4), §12.
 > Operating rules: [CLAUDE.md](../CLAUDE.md). Builds on PRP 003 (chunker + checkpoint) and PRP 000 (LLM layer).
 
 ## Goal
@@ -19,8 +19,8 @@ deterministic `MockProvider` — no real LLM required.
 ## Scope
 
 **In scope:**
-- `brevia/condense/prompts.py`: condense system prompt + JSON-contract user prompt builder.
-- `brevia/condense/condenser.py`:
+- `breviabook/condense/prompts.py`: condense system prompt + JSON-contract user prompt builder.
+- `breviabook/condense/condenser.py`:
   - `CondensedChunk` (pydantic) result model.
   - `Condenser(provider, model, target_ratio)` with `condense_chunk` and a checkpoint-aware
     `condense(chunks, checkpoint=...)`.
@@ -48,9 +48,9 @@ deterministic `MockProvider` — no real LLM required.
 
 ```yaml
 - docs/ROADMAP.md          # §7.1 image markers + keep/drop, §7.3 hierarchy + length, §5 step 3
-- brevia/condense/chunker.py   # Chunk (id, chapter_index, blocks, token_count, prev_context)
-- brevia/llm/base.py       # LLMProvider Protocol, Message
-- brevia/persistence/checkpoint.py  # CheckpointManager (result = dict[str, object])
+- breviabook/condense/chunker.py   # Chunk (id, chapter_index, blocks, token_count, prev_context)
+- breviabook/llm/base.py       # LLMProvider Protocol, Message
+- breviabook/persistence/checkpoint.py  # CheckpointManager (result = dict[str, object])
 - tests/conftest.py        # MockProvider (deterministic)
 ```
 
@@ -77,7 +77,7 @@ lines); kept blocks (heading/code/table) restored verbatim; image kept iff its i
 
 ### New / changed files
 
-- `brevia/condense/prompts.py`, `brevia/condense/condenser.py`
+- `breviabook/condense/prompts.py`, `breviabook/condense/condenser.py`
 - `tests/test_condenser.py`
 
 ## Validation gates (must all pass)
@@ -85,7 +85,7 @@ lines); kept blocks (heading/code/table) restored verbatim; image kept iff its i
 ```bash
 uv run ruff check .
 uv run ruff format --check .
-uv run mypy --strict brevia
+uv run mypy --strict breviabook
 uv run pytest -q
 uv run pip-licenses --fail-on "GPL"
 ```

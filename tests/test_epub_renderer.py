@@ -5,8 +5,8 @@ from __future__ import annotations
 import zipfile
 from pathlib import Path
 
-from brevia.images.selector import ImageSelector
-from brevia.ir.models import (
+from breviabook.images.selector import ImageSelector
+from breviabook.ir.models import (
     Chapter,
     CodeBlock,
     Document,
@@ -14,8 +14,8 @@ from brevia.ir.models import (
     ImageAsset,
     ImageBlock,
 )
-from brevia.parsers.epub_parser import EpubParser
-from brevia.render.epub_renderer import EpubRenderer
+from breviabook.parsers.epub_parser import EpubParser
+from breviabook.render.epub_renderer import EpubRenderer
 
 FIXTURE = Path(__file__).parent / "fixtures" / "sample.epub"
 

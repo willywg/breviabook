@@ -1,5 +1,5 @@
 [project]
-name = "brevia"
+name = "breviabook"
 version = "0.0.1"
 description = "Condense large technical ebooks (EPUB/PDF) preserving code and diagrams, optionally translating in the same pass."
 readme = "README.md"
@@ -29,24 +29,27 @@ dependencies = [
     "litellm>=1.40",        # MIT — unified provider layer (Ollama/OpenAI/Gemini/OpenRouter)
     "httpx>=0.27",          # BSD — async HTTP
     "tiktoken>=0.7",        # MIT — token counting (with char fallback)
-]
-
-[project.optional-dependencies]
-# Parser/renderer deps land with their phases; declared here so the audit covers them early.
-formats = [
+    # Parsers + EPUB/MD output — pure-wheel deps, no system libraries; safe for `uvx breviabook`.
     "lxml>=5.2",            # BSD — XHTML/OPF parsing
     "beautifulsoup4>=4.12", # MIT
     "pdfplumber>=0.11",     # MIT — PDF text/tables
     "pypdf>=4.2",           # BSD — PDF images/metadata
+]
+
+[project.optional-dependencies]
+# PDF OUTPUT only — weasyprint needs system libraries (Pango/cairo/gdk-pixbuf). Kept optional so
+# the base install (EPUB + Markdown) works everywhere with no native deps.
+# Install with `pip install breviabook[pdf]` / `uv sync --extra pdf`.
+pdf = [
     "weasyprint>=62",       # BSD — HTML/CSS -> PDF
 ]
 
 [project.scripts]
-brevia = "brevia.cli:app"
+breviabook = "breviabook.cli:app"
 
 [project.urls]
-Homepage = "https://github.com/willywg/brevia"
-Repository = "https://github.com/willywg/brevia"
+Homepage = "https://github.com/willywg/breviabook"
+Repository = "https://github.com/willywg/breviabook"
 
 [dependency-groups]
 dev = [
@@ -63,7 +66,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["brevia"]
+packages = ["breviabook"]
 
 # ----------------------------------------------------------------------------
 # Quality tooling (active from Phase 0 — must pass clean from the first commit)
@@ -79,7 +82,7 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 python_version = "3.11"
 strict = true
 warn_unreachable = true
-files = ["brevia"]
+files = ["breviabook"]
 
 [[tool.mypy.overrides]]
 module = ["litellm.*", "lxml.*", "weasyprint.*", "pdfplumber.*", "pypdf.*"]

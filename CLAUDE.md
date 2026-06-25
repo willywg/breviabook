@@ -1,10 +1,10 @@
-# CLAUDE.md — Brevia
+# CLAUDE.md — BreviaBook
 
 Guidance for AI agents working in this repository. The complete specification and
 phased build plan live in **[docs/ROADMAP.md](docs/ROADMAP.md)** — that document is
 the source of truth; this file is the quick operating manual.
 
-## What Brevia is
+## What BreviaBook is
 
 A CLI that takes a large technical ebook (EPUB/PDF, 200–400 pages) and produces a
 **condensed version** (~25–50% of the original) that preserves **code, formulas, and
@@ -48,7 +48,7 @@ with checkpoint/resume between chunking and translation. See ROADMAP §5.
 ```bash
 uv run ruff check .            # lint (rules: E,F,I,UP,B,SIM)
 uv run ruff format --check .   # format
-uv run mypy --strict brevia    # types — strict mode, type the whole pipeline
+uv run mypy --strict breviabook    # types — strict mode, type the whole pipeline
 uv run pytest                  # tests (pytest + pytest-asyncio)
 uv run pip-licenses --fail-on "GPL"   # license audit — blocks any GPL/AGPL dep
 ```
@@ -68,5 +68,5 @@ order**; each must be functional and tested before the next. **MVP = Phases 0–
 - Don't use ~450-token chunks; summarization needs ~2000-token chunks.
 - Never split a `code` block or a table across chunks.
 - Validate entry paths when unpacking EPUBs (zip-slip). Don't forward provider keys to an
-  arbitrary `--api-endpoint` (SSRF). See `brevia/utils/security.py`.
+  arbitrary `--api-endpoint` (SSRF). See `breviabook/utils/security.py`.
 - "Output longer than input" is a red flag — detect and warn.

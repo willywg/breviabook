@@ -4,16 +4,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from brevia.condense.chunker import Chunker, count_document_tokens
-from brevia.ir.models import (
+from breviabook.condense.chunker import Chunker, count_document_tokens
+from breviabook.ir.models import (
     Chapter,
     CodeBlock,
     Document,
     DocumentMetadata,
     ParagraphBlock,
 )
-from brevia.parsers.epub_parser import EpubParser
-from brevia.utils.tokens import block_tokens, count_tokens
+from breviabook.parsers.epub_parser import EpubParser
+from breviabook.utils.tokens import block_tokens, count_tokens
 
 FIXTURE = Path(__file__).parent / "fixtures" / "sample.epub"
 

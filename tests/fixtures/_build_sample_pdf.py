@@ -24,7 +24,7 @@ def build() -> None:
 
     png_b64 = base64.b64encode(make_png()).decode("ascii")
     html = f"""<!DOCTYPE html>
-<html lang="en"><head><meta charset="utf-8"><title>Brevia Sample PDF</title>
+<html lang="en"><head><meta charset="utf-8"><title>BreviaBook Sample PDF</title>
 <style>
   @page {{ size: A5; margin: 1.5cm; }}
   body {{ font-family: serif; }}

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from brevia.llm.key_pool import KeyPool
+from breviabook.llm.key_pool import KeyPool
 
 
 def test_empty_pool_is_falsy() -> None:

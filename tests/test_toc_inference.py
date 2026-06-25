@@ -6,9 +6,9 @@ import json
 
 import pytest
 
-from brevia.llm.base import Message
-from brevia.parsers.pdf_parser import TocEntry
-from brevia.parsers.toc_inference import build_toc_messages, infer_toc
+from breviabook.llm.base import Message
+from breviabook.parsers.pdf_parser import TocEntry
+from breviabook.parsers.toc_inference import build_toc_messages, infer_toc
 
 
 class ScriptedProvider:

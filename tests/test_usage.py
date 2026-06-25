@@ -5,11 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from brevia.llm.base import Message
-from brevia.llm.key_pool import KeyPool
-from brevia.llm.providers.openai import OpenAIProvider
-from brevia.llm.usage import Usage, extract_usage
-from brevia.pipeline import condense_book
+from breviabook.llm.base import Message
+from breviabook.llm.key_pool import KeyPool
+from breviabook.llm.providers.openai import OpenAIProvider
+from breviabook.llm.usage import Usage, extract_usage
+from breviabook.pipeline import condense_book
 
 FIXTURE = Path(__file__).parent / "fixtures" / "sample.epub"
 

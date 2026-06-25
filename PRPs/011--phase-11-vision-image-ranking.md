@@ -1,6 +1,6 @@
 # PRP: Phase 11 — Vision-based image ranking (`--rank-images`)
 
-> Product Requirement Prompt for **Brevia**. Source of truth: [docs/ROADMAP.md](../docs/ROADMAP.md) §7.1 (Strategy B), §7.4, §6, §8, §10 (Phase 11).
+> Product Requirement Prompt for **BreviaBook**. Source of truth: [docs/ROADMAP.md](../docs/ROADMAP.md) §7.1 (Strategy B), §7.4, §6, §8, §10 (Phase 11).
 > Operating rules: [CLAUDE.md](../CLAUDE.md). Builds on PRP 006 (selector) and PRP 009 (providers).
 
 ## Goal
@@ -41,9 +41,9 @@ caption. Enabled by `--rank-images`. Uses the same provider/model (Gemini is mul
 
 ```yaml
 - docs/ROADMAP.md          # §7.1 Strategy B (score + regenerate caption), §7.4 generate_with_image
-- brevia/llm/providers/litellm_base.py  # provider base to extend
-- brevia/images/selector.py             # Strategy A (runs after)
-- brevia/ir/models.py                    # ImageBlock/ImageAsset, model_copy
+- breviabook/llm/providers/litellm_base.py  # provider base to extend
+- breviabook/images/selector.py             # Strategy A (runs after)
+- breviabook/ir/models.py                    # ImageBlock/ImageAsset, model_copy
 - litellm multimodal: messages=[{role:user, content:[{type:text},{type:image_url,image_url:{url:data:...}}]}]
 ```
 
@@ -71,14 +71,14 @@ caption. Enabled by `--rank-images`. Uses the same provider/model (Gemini is mul
 
 ### New / changed files
 
-- `brevia/llm/base.py`, `brevia/llm/providers/litellm_base.py`, `brevia/llm/providers/ollama.py`
-- `brevia/images/vision_ranker.py`, `brevia/pipeline.py`, `brevia/cli.py`
+- `breviabook/llm/base.py`, `breviabook/llm/providers/litellm_base.py`, `breviabook/llm/providers/ollama.py`
+- `breviabook/images/vision_ranker.py`, `breviabook/pipeline.py`, `breviabook/cli.py`
 - tests as above
 
 ## Validation gates (must all pass)
 
 ```bash
-uv run ruff check . && uv run ruff format --check . && uv run mypy --strict brevia
+uv run ruff check . && uv run ruff format --check . && uv run mypy --strict breviabook
 uv run pytest -q && uv run pip-licenses --fail-on "GPL"
 ```
 

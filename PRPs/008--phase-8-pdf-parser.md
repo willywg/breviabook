@@ -1,17 +1,17 @@
 # PRP: Phase 8 — PDF parser + TOC inference
 
-> Product Requirement Prompt for **Brevia**. Source of truth: [docs/ROADMAP.md](../docs/ROADMAP.md) §2.3, §4, §6, §10 (Phase 8), §14.
+> Product Requirement Prompt for **BreviaBook**. Source of truth: [docs/ROADMAP.md](../docs/ROADMAP.md) §2.3, §4, §6, §10 (Phase 8), §14.
 > Operating rules: [CLAUDE.md](../CLAUDE.md). Builds on PRP 001 (IR) and PRP 004 (LLM layer).
 
 ## Goal
 
-Parse a PDF into the IR: `brevia/parsers/pdf_parser.py` (pdfplumber for text/tables, pypdf for
-images/metadata/outline) + `brevia/parsers/toc_inference.py` (LLM infers chapters when the PDF
+Parse a PDF into the IR: `breviabook/parsers/pdf_parser.py` (pdfplumber for text/tables, pypdf for
+images/metadata/outline) + `breviabook/parsers/toc_inference.py` (LLM infers chapters when the PDF
 has no outline) + a `--manual-toc FILE` (JSON) fallback. Wire PDF input through the CLI/pipeline.
 
 ## Why
 
-- Lets Brevia condense PDFs, not just EPUBs — the owner's books come in both formats.
+- Lets BreviaBook condense PDFs, not just EPUBs — the owner's books come in both formats.
 - TOC inference + manual TOC handle the common case of PDFs without bookmarks.
 
 ## Scope
@@ -22,7 +22,7 @@ has no outline) + a `--manual-toc FILE` (JSON) fallback. Wire PDF input through 
   paragraphs (line-gap grouping), tables (pdfplumber, excluded from text by bbox), images
   (pypdf, **deduped by content hash**). Chapters from outline / manual TOC / inferred TOC.
 - `toc_inference.py`: async `infer_toc(provider, model, page_texts, max_pages)` → `[TocEntry]`.
-- `brevia/utils/jsonx.py`: shared `extract_json_object` (ValueError on failure); refactor
+- `breviabook/utils/jsonx.py`: shared `extract_json_object` (ValueError on failure); refactor
   `condense/common.extract_json` onto it; toc_inference uses it too.
 - CLI `--manual-toc` option; pipeline PDF path (outline → manual → LLM → single chapter).
 - A committed `tests/fixtures/sample.pdf` (+ its weasyprint builder) and tests.
@@ -74,8 +74,8 @@ has no outline) + a `--manual-toc FILE` (JSON) fallback. Wire PDF input through 
 
 ### New / changed files
 
-- `brevia/utils/jsonx.py`, `brevia/parsers/pdf_parser.py`, `brevia/parsers/toc_inference.py`
-- `brevia/condense/common.py`, `brevia/cli.py`, `brevia/pipeline.py`, `pyproject.toml` (mypy)
+- `breviabook/utils/jsonx.py`, `breviabook/parsers/pdf_parser.py`, `breviabook/parsers/toc_inference.py`
+- `breviabook/condense/common.py`, `breviabook/cli.py`, `breviabook/pipeline.py`, `pyproject.toml` (mypy)
 - `tests/fixtures/_build_sample_pdf.py` + `tests/fixtures/sample.pdf`, tests
 
 ## Validation gates (must all pass)
@@ -83,7 +83,7 @@ has no outline) + a `--manual-toc FILE` (JSON) fallback. Wire PDF input through 
 ```bash
 uv run ruff check .
 uv run ruff format --check .
-uv run mypy --strict brevia
+uv run mypy --strict breviabook
 uv run pytest -q
 uv run pip-licenses --fail-on "GPL"
 ```
@@ -102,7 +102,7 @@ uv run pip-licenses --fail-on "GPL"
 ## Acceptance criteria
 
 - [ ] `PdfParser().parse(sample.pdf)` returns a populated, chapter-split `Document`.
-- [ ] PDF input works through the CLI (`brevia condense book.pdf ...`).
+- [ ] PDF input works through the CLI (`breviabook condense book.pdf ...`).
 - [ ] All five validation gates green.
 
 ## Confidence score

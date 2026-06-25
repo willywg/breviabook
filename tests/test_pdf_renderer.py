@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from brevia.ir.models import (
+from breviabook.ir.models import (
     Chapter,
     Document,
     DocumentMetadata,
@@ -16,21 +16,21 @@ from brevia.ir.models import (
     ParagraphBlock,
     TableBlock,
 )
-from brevia.parsers.epub_parser import EpubParser
-from brevia.render.pdf_renderer import PdfRenderer, build_html, weasyprint_available
+from breviabook.parsers.epub_parser import EpubParser
+from breviabook.render.pdf_renderer import PdfRenderer, build_html, weasyprint_available
 
 FIXTURE = Path(__file__).parent / "fixtures" / "sample.epub"
 
 
 def test_importing_module_never_requires_system_libs() -> None:
     # Importing the renderer must succeed even when weasyprint's libs are missing.
-    importlib.import_module("brevia.render.pdf_renderer")
+    importlib.import_module("breviabook.render.pdf_renderer")
 
 
 def test_build_html_contains_all_elements() -> None:
     doc = EpubParser().parse(FIXTURE)
     html = build_html(doc)
-    assert "Brevia Sample Book" in html
+    assert "BreviaBook Sample Book" in html
     assert '<section class="chapter">' in html
     assert "<pre><code" in html
     assert "def hello() -&gt; str:" in html  # code escaped + verbatim

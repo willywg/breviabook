@@ -7,14 +7,14 @@ from pathlib import Path
 
 import pytest
 
-from brevia.condense.chunker import Chunker
-from brevia.condense.condenser import (
+from breviabook.condense.chunker import Chunker
+from breviabook.condense.condenser import (
     CondensedChunk,
     CondenseError,
     Condenser,
     assemble_condensed_document,
 )
-from brevia.ir.models import (
+from breviabook.ir.models import (
     Chapter,
     CodeBlock,
     Document,
@@ -23,8 +23,8 @@ from brevia.ir.models import (
     ImageBlock,
     ParagraphBlock,
 )
-from brevia.llm.base import Message
-from brevia.persistence.checkpoint import CheckpointManager
+from breviabook.llm.base import Message
+from breviabook.persistence.checkpoint import CheckpointManager
 
 
 class ScriptedProvider:
@@ -124,7 +124,7 @@ async def test_invalid_json_keeps_chunk_uncondensed_without_crashing() -> None:
 
 
 async def test_low_level_parse_still_raises() -> None:
-    from brevia.condense.condenser import _parse_response
+    from breviabook.condense.condenser import _parse_response
 
     with pytest.raises(CondenseError):
         _parse_response("not json at all")
@@ -198,7 +198,7 @@ async def test_assemble_condensed_document_groups_and_filters_images() -> None:
 
 
 async def test_condenses_real_fixture_chunks() -> None:
-    from brevia.parsers.epub_parser import EpubParser
+    from breviabook.parsers.epub_parser import EpubParser
 
     doc = EpubParser().parse(Path(__file__).parent / "fixtures" / "sample.epub")
     chunks = Chunker(max_tokens=2000).chunk(doc)

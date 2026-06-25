@@ -1,7 +1,7 @@
 # PRP feat — CLI TUI: banner + live progress & usage
 
 ## Goal
-Replace the coarse, per-phase `· message` logging with an interactive terminal UI: a Brevia
+Replace the coarse, per-phase `· message` logging with an interactive terminal UI: a BreviaBook
 ASCII banner on startup, a per-phase progress bar (Parse → Condense → Synthesize →
 [Translate] → [Rank images] → Render), and a **live usage panel** that ticks token and cost
 totals as the run proceeds. Degrade cleanly to plain text when output is piped/redirected.
@@ -14,9 +14,9 @@ hooks needed (`Condenser.on_progress`, `Synthesizer.on_progress`, and `provider.
 accumulating per call); they just weren't surfaced.
 
 ## Design
-- `brevia/ui/banner.py` — `banner_renderable()` / `print_banner(console)`; block-style wordmark
+- `breviabook/ui/banner.py` — `banner_renderable()` / `print_banner(console)`; block-style wordmark
   in a cyan panel + tagline + version. Separated build/print so it is unit-testable.
-- `brevia/ui/progress.py` — a small `ProgressReporter` Protocol (`note` / `phase` / `advance`)
+- `breviabook/ui/progress.py` — a small `ProgressReporter` Protocol (`note` / `phase` / `advance`)
   with three implementations:
   - `RunReporter` — `rich.Live` group of a `Progress` (spinner→green ✓ per phase, bar, M/N, %)
     plus a usage `Panel` rebuilt from a `Usage` source (the provider's live-accumulating
@@ -31,16 +31,16 @@ accumulating per call); they just weren't surfaced.
   (pipe) and wraps the run in the reporter context, passing `provider.usage` as the live source.
 
 ## Files
-- NEW `brevia/ui/__init__.py`, `brevia/ui/banner.py`, `brevia/ui/progress.py`
-- EDIT `brevia/pipeline.py` (reporter param + phase/advance wiring)
-- EDIT `brevia/translate/translator.py` (`on_progress` hook)
-- EDIT `brevia/cli.py` (banner + reporter selection)
+- NEW `breviabook/ui/__init__.py`, `breviabook/ui/banner.py`, `breviabook/ui/progress.py`
+- EDIT `breviabook/pipeline.py` (reporter param + phase/advance wiring)
+- EDIT `breviabook/translate/translator.py` (`on_progress` hook)
+- EDIT `breviabook/cli.py` (banner + reporter selection)
 - NEW `tests/test_ui.py`
 
 ## Validation
 ```bash
 uv run ruff check . && uv run ruff format --check .
-uv run mypy --strict brevia
+uv run mypy --strict breviabook
 uv run pytest -q          # 159 passed, 1 skipped
 uv run pip-licenses --fail-on "GPL"
 ```

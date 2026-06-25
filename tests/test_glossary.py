@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from brevia.translate.glossary import Glossary
+from breviabook.translate.glossary import Glossary
 
 
 def test_empty_glossary_is_falsy_and_blank_prompt() -> None:

@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from brevia.ir.models import (
+from breviabook.ir.models import (
     Chapter,
     CodeBlock,
     Document,
@@ -18,9 +18,9 @@ from brevia.ir.models import (
     ParagraphBlock,
     TableBlock,
 )
-from brevia.llm.base import Message
-from brevia.translate.glossary import Glossary
-from brevia.translate.translator import TranslateError, Translator, build_translate_messages
+from breviabook.llm.base import Message
+from breviabook.translate.glossary import Glossary
+from breviabook.translate.translator import TranslateError, Translator, build_translate_messages
 
 
 class ScriptedProvider:

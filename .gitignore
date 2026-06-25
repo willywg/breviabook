@@ -10,7 +10,7 @@ secrets/
 *.sqlite3
 *.db
 checkpoints/
-.brevia/
+.breviabook/
 output/
 out/
 

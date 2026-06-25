@@ -1,6 +1,6 @@
 # PRP: {FEATURE_NAME}
 
-> Product Requirement Prompt for **Brevia**. Goal: enough context + executable
+> Product Requirement Prompt for **BreviaBook**. Goal: enough context + executable
 > validation for one-pass implementation. Source of truth: [docs/ROADMAP.md](../../docs/ROADMAP.md).
 > Operating rules: [CLAUDE.md](../../CLAUDE.md).
 
@@ -31,7 +31,7 @@
 # Files to read/follow in this repo:
 - docs/ROADMAP.md          # spec — read the relevant § for this phase
 - CLAUDE.md                # operating rules, stack, license rules
-- brevia/ir/models.py      # the IR — Document/Chapter/Block/ImageAsset (once it exists)
+- breviabook/ir/models.py      # the IR — Document/Chapter/Block/ImageAsset (once it exists)
 
 # External docs (add concrete URLs as needed):
 - {library}: {url}
@@ -41,7 +41,7 @@ Patterns to study (NEVER copy code): {TBL path / cognitivetech / OllamaBook-Summ
 
 ## Implementation blueprint
 
-{Ordered, concrete steps. Reference real files under brevia/ from ROADMAP §6.}
+{Ordered, concrete steps. Reference real files under breviabook/ from ROADMAP §6.}
 
 1. {step}
 2. {step}
@@ -49,7 +49,7 @@ Patterns to study (NEVER copy code): {TBL path / cognitivetech / OllamaBook-Summ
 
 ### New / changed files
 
-- `brevia/{...}.py` — {purpose}
+- `breviabook/{...}.py` — {purpose}
 - `tests/{...}.py` — {what it asserts}
 
 ## Validation gates (must all pass)
@@ -57,7 +57,7 @@ Patterns to study (NEVER copy code): {TBL path / cognitivetech / OllamaBook-Summ
 ```bash
 uv run ruff check .
 uv run ruff format --check .
-uv run mypy --strict brevia
+uv run mypy --strict breviabook
 uv run pytest -q
 uv run pip-licenses --fail-on "GPL"
 ```

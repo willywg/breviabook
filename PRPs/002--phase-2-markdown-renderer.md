@@ -1,11 +1,11 @@
 # PRP: Phase 2 — Markdown renderer
 
-> Product Requirement Prompt for **Brevia**. Source of truth: [docs/ROADMAP.md](../docs/ROADMAP.md) §5, §6, §10 (Phase 2), §11.
+> Product Requirement Prompt for **BreviaBook**. Source of truth: [docs/ROADMAP.md](../docs/ROADMAP.md) §5, §6, §10 (Phase 2), §11.
 > Operating rules: [CLAUDE.md](../CLAUDE.md). Builds on PRP 001 (IR + EPUB parser).
 
 ## Goal
 
-Render a `Document` (IR) to Markdown: `brevia/render/md_renderer.py` writes a `.md` file
+Render a `Document` (IR) to Markdown: `breviabook/render/md_renderer.py` writes a `.md` file
 plus the referenced image assets to disk, with relative image links. This closes the first
 real file→file round-trip (parse EPUB → render MD) and validates the IR end-to-end **with no
 LLM**.
@@ -19,9 +19,9 @@ LLM**.
 ## Scope
 
 **In scope:**
-- `brevia/render/base.py`: `Renderer` Protocol (`render(doc, out_dir) -> Path`) + a shared
+- `breviabook/render/base.py`: `Renderer` Protocol (`render(doc, out_dir) -> Path`) + a shared
   helper for deriving image filenames from `ImageAsset`.
-- `brevia/render/md_renderer.py`: `MarkdownRenderer` — IR → Markdown string; writes
+- `breviabook/render/md_renderer.py`: `MarkdownRenderer` — IR → Markdown string; writes
   `<stem>.md` and an `images/` folder with each asset.
 - Tests: parse the fixture EPUB → render MD → assert every block type is represented and
   image files land on disk.
@@ -39,8 +39,8 @@ LLM**.
 
 ```yaml
 - docs/ROADMAP.md          # §5 pipeline step [7], §6 render/ layout, §11 round-trip test
-- brevia/ir/models.py      # Document/Chapter/Block discriminated union
-- brevia/parsers/epub_parser.py  # produces the Document the renderer consumes
+- breviabook/ir/models.py      # Document/Chapter/Block discriminated union
+- breviabook/parsers/epub_parser.py  # produces the Document the renderer consumes
 ```
 
 Markdown mapping:
@@ -69,7 +69,7 @@ Markdown mapping:
 
 ### New / changed files
 
-- `brevia/render/base.py`, `brevia/render/md_renderer.py`
+- `breviabook/render/base.py`, `breviabook/render/md_renderer.py`
 - `tests/test_md_renderer.py`
 
 ## Validation gates (must all pass)
@@ -77,7 +77,7 @@ Markdown mapping:
 ```bash
 uv run ruff check .
 uv run ruff format --check .
-uv run mypy --strict brevia
+uv run mypy --strict breviabook
 uv run pytest -q
 uv run pip-licenses --fail-on "GPL"
 ```

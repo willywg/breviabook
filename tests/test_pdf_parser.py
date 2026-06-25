@@ -7,9 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from brevia.ir.models import CodeBlock, ImageBlock, TableBlock
-from brevia.parsers.base import ParseError
-from brevia.parsers.pdf_parser import PdfParser, TocEntry, load_manual_toc
+from breviabook.ir.models import CodeBlock, ImageBlock, TableBlock
+from breviabook.parsers.base import ParseError
+from breviabook.parsers.pdf_parser import PdfParser, TocEntry, load_manual_toc
 
 FIXTURE = Path(__file__).parent / "fixtures" / "sample.pdf"
 
@@ -21,7 +21,7 @@ def doc():
 
 def test_metadata_and_chapters_from_outline(doc) -> None:
     assert doc.metadata.source_format == "pdf"
-    assert doc.metadata.title == "Brevia Sample PDF"
+    assert doc.metadata.title == "BreviaBook Sample PDF"
     assert [c.title for c in doc.chapters] == ["Chapter One", "Chapter Two"]
 
 
@@ -63,7 +63,7 @@ def test_build_without_toc_is_single_chapter() -> None:
     extracted = parser.extract(FIXTURE)
     single = parser.build(extracted, None)
     assert len(single.chapters) == 1
-    assert single.chapters[0].title == "Brevia Sample PDF"
+    assert single.chapters[0].title == "BreviaBook Sample PDF"
 
 
 def test_manual_toc_overrides_outline() -> None:

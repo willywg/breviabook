@@ -1,13 +1,13 @@
 # PRP: Usage & cost reporting
 
-> Product Requirement Prompt for **Brevia**. Cross-cutting feature (relates to ROADMAP §10 Phase 12).
+> Product Requirement Prompt for **BreviaBook**. Cross-cutting feature (relates to ROADMAP §10 Phase 12).
 > Operating rules: [CLAUDE.md](../CLAUDE.md). Builds on PRP 009 (providers).
 
 ## Goal
 
 Capture real token usage (prompt / completion / cached) and approximate cost per run by
 reading each LLM response's `usage`, accumulating it on the provider, and reporting a
-usage/cost summary at the end of `brevia condense`.
+usage/cost summary at the end of `breviabook condense`.
 
 ## Why
 
@@ -44,7 +44,7 @@ usage/cost summary at the end of `brevia condense`.
 
 ## Implementation blueprint
 
-1. `brevia/llm/usage.py`.
+1. `breviabook/llm/usage.py`.
 2. `litellm_base.py` + `ollama.py`: accumulate usage.
 3. `pipeline.py`: `CondenseResult.usage` + populate.
 4. `cli.py`: usage/cost table.
@@ -53,7 +53,7 @@ usage/cost summary at the end of `brevia condense`.
 ## Validation gates (must all pass)
 
 ```bash
-uv run ruff check . && uv run ruff format --check . && uv run mypy --strict brevia
+uv run ruff check . && uv run ruff format --check . && uv run mypy --strict breviabook
 uv run pytest -q && uv run pip-licenses --fail-on "GPL"
 ```
 

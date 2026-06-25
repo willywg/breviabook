@@ -1,26 +1,26 @@
 # PRP: Phase 7 — PDF renderer
 
-> Product Requirement Prompt for **Brevia**. Source of truth: [docs/ROADMAP.md](../docs/ROADMAP.md) §4, §5, §6, §10 (Phase 7), §14.
+> Product Requirement Prompt for **BreviaBook**. Source of truth: [docs/ROADMAP.md](../docs/ROADMAP.md) §4, §5, §6, §10 (Phase 7), §14.
 > Operating rules: [CLAUDE.md](../CLAUDE.md). Builds on PRP 006 (EPUB renderer). Completes the MVP (Phases 0–7).
 
 ## Goal
 
-Render the IR to PDF: `brevia/render/pdf_renderer.py` builds a single self-contained HTML
+Render the IR to PDF: `breviabook/render/pdf_renderer.py` builds a single self-contained HTML
 document from the `Document` (images inlined as data URIs) and converts it with
 `weasyprint`. Factor the block→HTML mapping into a shared module reused by the EPUB renderer.
 
 ## Why
 
-- PDF is the third output format; with it Brevia produces EPUB + PDF + MD and the MVP is done.
+- PDF is the third output format; with it BreviaBook produces EPUB + PDF + MD and the MVP is done.
 - `weasyprint` (BSD) keeps us AGPL-free (no PyMuPDF) — ROADMAP §14.
 
 ## Scope
 
 **In scope:**
-- `brevia/render/html.py`: shared `esc()` + `block_to_html(block, image_src)` where
+- `breviabook/render/html.py`: shared `esc()` + `block_to_html(block, image_src)` where
   `image_src(image_id) -> str | None` resolves the `<img>` source. EPUB and PDF both use it.
 - Refactor `render/epub_renderer.py` to use `render/html.py` (output unchanged).
-- `brevia/render/pdf_renderer.py`: `PdfRenderer` + module-level `build_html(doc)`. Images
+- `breviabook/render/pdf_renderer.py`: `PdfRenderer` + module-level `build_html(doc)`. Images
   inlined as `data:` URIs (self-contained, deterministic). **Lazy-import** weasyprint inside
   `render()` so importing the module never fails when system libs are absent;
   `weasyprint_available()` helper.
@@ -41,8 +41,8 @@ document from the `Document` (images inlined as data URIs) and converts it with
 
 ```yaml
 - docs/ROADMAP.md          # §4 weasyprint, §5 step 7, §10 Phase 7
-- brevia/render/epub_renderer.py  # current block->xhtml to factor out
-- brevia/render/base.py    # Renderer Protocol
+- breviabook/render/epub_renderer.py  # current block->xhtml to factor out
+- breviabook/render/base.py    # Renderer Protocol
 - weasyprint: HTML(string=...).write_pdf(target)
 - system libs (mac): brew install pango gdk-pixbuf libffi
 - system libs (ubuntu CI): libpango-1.0-0 libpangocairo-1.0-0 libgdk-pixbuf-2.0-0 libffi-dev
@@ -70,8 +70,8 @@ document from the `Document` (images inlined as data URIs) and converts it with
 
 ### New / changed files
 
-- `brevia/render/html.py` (new), `brevia/render/pdf_renderer.py` (new)
-- `brevia/render/epub_renderer.py` (refactor), `pyproject.toml`, `.github/workflows/ci.yml`
+- `breviabook/render/html.py` (new), `breviabook/render/pdf_renderer.py` (new)
+- `breviabook/render/epub_renderer.py` (refactor), `pyproject.toml`, `.github/workflows/ci.yml`
 - `tests/test_pdf_renderer.py` (new)
 
 ## Validation gates (must all pass)
@@ -79,7 +79,7 @@ document from the `Document` (images inlined as data URIs) and converts it with
 ```bash
 uv run ruff check .
 uv run ruff format --check .
-uv run mypy --strict brevia
+uv run mypy --strict breviabook
 uv run pytest -q
 uv run pip-licenses --fail-on "GPL"
 ```
@@ -88,14 +88,14 @@ uv run pip-licenses --fail-on "GPL"
 
 - [ ] `build_html(doc)` contains chapter sections, verbatim escaped code, a data-URI `<img>`,
       a table, and the book title; no chapter-title duplication.
-- [ ] Importing `brevia.render.pdf_renderer` succeeds even without weasyprint system libs.
+- [ ] Importing `breviabook.render.pdf_renderer` succeeds even without weasyprint system libs.
 - [ ] When weasyprint is available, `PdfRenderer().render` writes a file starting with `%PDF`.
 - [ ] EPUB renderer tests still pass after the refactor.
 
 ## Acceptance criteria
 
 - [ ] HTML is built deterministically and self-contained; PDF generated when libs present.
-- [ ] Brevia can now emit EPUB + PDF + MD from one IR (MVP complete).
+- [ ] BreviaBook can now emit EPUB + PDF + MD from one IR (MVP complete).
 - [ ] All five validation gates green (PDF-generation test skipped if libs absent locally).
 
 ## Confidence score

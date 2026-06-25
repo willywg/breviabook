@@ -1,6 +1,6 @@
 # PRP: Phase 9 — More providers + key rotation
 
-> Product Requirement Prompt for **Brevia**. Source of truth: [docs/ROADMAP.md](../docs/ROADMAP.md) §7.4, §6, §9, §10 (Phase 9), §12, §14.
+> Product Requirement Prompt for **BreviaBook**. Source of truth: [docs/ROADMAP.md](../docs/ROADMAP.md) §7.4, §6, §9, §10 (Phase 9), §12, §14.
 > Operating rules: [CLAUDE.md](../CLAUDE.md). Builds on PRP 000 (LLM layer).
 
 ## Goal
@@ -11,7 +11,7 @@ providers behind the existing `LLMProvider` Protocol, all via litellm, with **AP
 
 ## Why
 
-- Frees Brevia from local-only Ollama: paid APIs when they make sense, and any
+- Frees BreviaBook from local-only Ollama: paid APIs when they make sense, and any
   OpenAI-compatible endpoint (vLLM/LM Studio/LocalAI) via base_url.
 - Key rotation keeps long jobs alive across rate limits / dead keys.
 
@@ -44,10 +44,10 @@ providers behind the existing `LLMProvider` Protocol, all via litellm, with **AP
 ## Context & references
 
 ```yaml
-- brevia/llm/base.py        # LLMProvider Protocol, Message
-- brevia/llm/factory.py     # get_provider(name, settings)
-- brevia/llm/providers/ollama.py  # existing litellm usage pattern
-- brevia/config.py          # keys_for(provider) -> comma-split list
+- breviabook/llm/base.py        # LLMProvider Protocol, Message
+- breviabook/llm/factory.py     # get_provider(name, settings)
+- breviabook/llm/providers/ollama.py  # existing litellm usage pattern
+- breviabook/config.py          # keys_for(provider) -> comma-split list
 - litellm routes: openai/<m> (+api_base for compatible), gemini/<m>, openrouter/<m>
 # Study (never copy): TBL key_pool.py / rate_limit_handler.py
 ```
@@ -75,9 +75,9 @@ providers behind the existing `LLMProvider` Protocol, all via litellm, with **AP
 
 ### New / changed files
 
-- `brevia/llm/key_pool.py`, `brevia/llm/rate_limit.py`
-- `brevia/llm/providers/litellm_base.py`, `.../openai.py`, `.../gemini.py`, `.../openrouter.py`
-- `brevia/llm/factory.py`, `brevia/cli.py`
+- `breviabook/llm/key_pool.py`, `breviabook/llm/rate_limit.py`
+- `breviabook/llm/providers/litellm_base.py`, `.../openai.py`, `.../gemini.py`, `.../openrouter.py`
+- `breviabook/llm/factory.py`, `breviabook/cli.py`
 - tests as above
 
 ## Validation gates (must all pass)
@@ -85,7 +85,7 @@ providers behind the existing `LLMProvider` Protocol, all via litellm, with **AP
 ```bash
 uv run ruff check .
 uv run ruff format --check .
-uv run mypy --strict brevia
+uv run mypy --strict breviabook
 uv run pytest -q
 uv run pip-licenses --fail-on "GPL"
 ```

@@ -6,7 +6,7 @@ call a real model (ROADMAP §11). It satisfies the ``LLMProvider`` Protocol stru
 
 from __future__ import annotations
 
-from brevia.llm.base import Message
+from breviabook.llm.base import Message
 
 
 class MockProvider:

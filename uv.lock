@@ -241,14 +241,18 @@ wheels = [
 ]
 
 [[package]]
-name = "brevia"
+name = "breviabook"
 version = "0.0.1"
 source = { editable = "." }
 dependencies = [
+    { name = "beautifulsoup4" },
     { name = "httpx" },
     { name = "litellm" },
+    { name = "lxml" },
+    { name = "pdfplumber" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
+    { name = "pypdf" },
     { name = "python-dotenv" },
     { name = "rich" },
     { name = "tiktoken" },
@@ -256,11 +260,7 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
-formats = [
-    { name = "beautifulsoup4" },
-    { name = "lxml" },
-    { name = "pdfplumber" },
-    { name = "pypdf" },
+pdf = [
     { name = "weasyprint" },
 ]
 
@@ -276,21 +276,21 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "beautifulsoup4", marker = "extra == 'formats'", specifier = ">=4.12" },
+    { name = "beautifulsoup4", specifier = ">=4.12" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "litellm", specifier = ">=1.40" },
-    { name = "lxml", marker = "extra == 'formats'", specifier = ">=5.2" },
-    { name = "pdfplumber", marker = "extra == 'formats'", specifier = ">=0.11" },
+    { name = "lxml", specifier = ">=5.2" },
+    { name = "pdfplumber", specifier = ">=0.11" },
     { name = "pydantic", specifier = ">=2.6" },
     { name = "pydantic-settings", specifier = ">=2.2" },
-    { name = "pypdf", marker = "extra == 'formats'", specifier = ">=4.2" },
+    { name = "pypdf", specifier = ">=4.2" },
     { name = "python-dotenv", specifier = ">=1.0" },
     { name = "rich", specifier = ">=13.7" },
     { name = "tiktoken", specifier = ">=0.7" },
     { name = "typer", specifier = ">=0.12" },
-    { name = "weasyprint", marker = "extra == 'formats'", specifier = ">=62" },
+    { name = "weasyprint", marker = "extra == 'pdf'", specifier = ">=62" },
 ]
-provides-extras = ["formats"]
+provides-extras = ["pdf"]
 
 [package.metadata.requires-dev]
 dev = [

@@ -5,8 +5,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from brevia.images.vision_ranker import VisionRanker, build_vision_prompt
-from brevia.ir.models import (
+from breviabook.images.vision_ranker import VisionRanker, build_vision_prompt
+from breviabook.ir.models import (
     Chapter,
     Document,
     DocumentMetadata,
@@ -14,7 +14,7 @@ from brevia.ir.models import (
     ImageBlock,
     ParagraphBlock,
 )
-from brevia.llm.base import Message
+from breviabook.llm.base import Message
 
 
 class FakeVisionProvider:

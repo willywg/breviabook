@@ -1,11 +1,11 @@
 # PRP: CLI pipeline wiring (MVP capstone)
 
-> Product Requirement Prompt for **Brevia**. Source of truth: [docs/ROADMAP.md](../docs/ROADMAP.md) §5, §8, §13.
+> Product Requirement Prompt for **BreviaBook**. Source of truth: [docs/ROADMAP.md](../docs/ROADMAP.md) §5, §8, §13.
 > Operating rules: [CLAUDE.md](../CLAUDE.md). Connects Phases 1–7 end-to-end so the MVP is runnable.
 
 ## Goal
 
-Wire the full pipeline behind `brevia condense`: parse → chunk → condense → synthesize →
+Wire the full pipeline behind `breviabook condense`: parse → chunk → condense → synthesize →
 select images → render (EPUB/PDF/MD), with `--resume`, `--dry-run`, `--formats`, and progress
 output. Today the components exist but the CLI is a stub.
 
@@ -17,9 +17,9 @@ output. Today the components exist but the CLI is a stub.
 ## Scope
 
 **In scope:**
-- `brevia/pipeline.py`: UI-agnostic orchestrator — `condense_book(...) -> CondenseResult` and
+- `breviabook/pipeline.py`: UI-agnostic orchestrator — `condense_book(...) -> CondenseResult` and
   `estimate_condense(...) -> Estimate`. Provider is **injected** (testable with the mock).
-- Rewire `brevia/cli.py condense` to build the provider via the factory and call the pipeline;
+- Rewire `breviabook/cli.py condense` to build the provider via the factory and call the pipeline;
   `--dry-run` prints the estimate; render each requested format; surface warnings
   (output>input) and resume status with `rich`.
 - Tests with the mock provider (formats md+epub to avoid weasyprint system libs).
@@ -39,15 +39,15 @@ translation execution (Phase 10 — `--translate-to` warns), cost numbers in `--
 ## Context & references
 
 ```yaml
-- brevia/parsers/epub_parser.py       # EpubParser
-- brevia/condense/chunker.py          # Chunker, count_document_tokens
-- brevia/condense/condenser.py        # Condenser, assemble_condensed_document
-- brevia/condense/synthesizer.py      # Synthesizer, synthesized_to_document
-- brevia/images/selector.py           # ImageSelector
-- brevia/render/{md,epub,pdf}_renderer.py
-- brevia/persistence/checkpoint.py    # CheckpointManager
-- brevia/llm/factory.py               # get_provider
-- brevia/config.py                    # load_settings, defaults
+- breviabook/parsers/epub_parser.py       # EpubParser
+- breviabook/condense/chunker.py          # Chunker, count_document_tokens
+- breviabook/condense/condenser.py        # Condenser, assemble_condensed_document
+- breviabook/condense/synthesizer.py      # Synthesizer, synthesized_to_document
+- breviabook/images/selector.py           # ImageSelector
+- breviabook/render/{md,epub,pdf}_renderer.py
+- breviabook/persistence/checkpoint.py    # CheckpointManager
+- breviabook/llm/factory.py               # get_provider
+- breviabook/config.py                    # load_settings, defaults
 ```
 
 ## Design
@@ -56,7 +56,7 @@ translation execution (Phase 10 — `--translate-to` warns), cost numbers in `--
   resume, checkpoint_path=None, translate_to=None, log=noop) -> CondenseResult`:
   1. choose parser by suffix (`.epub` → EpubParser; `.pdf` → NotImplementedError Phase 8).
   2. parse → `input_tokens = count_document_tokens(doc)`.
-  3. chunk → checkpoint at `out_dir/.brevia/<stem>.jsonl`; `clear()` it unless `resume`.
+  3. chunk → checkpoint at `out_dir/.breviabook/<stem>.jsonl`; `clear()` it unless `resume`.
   4. condense (checkpointed) → collect `output_longer_than_input` warnings.
   5. synthesize → `synthesized_to_document`.
   6. if `translate_to`: append a "translation lands in Phase 10" warning (no-op).
@@ -69,14 +69,14 @@ translation execution (Phase 10 — `--translate-to` warns), cost numbers in `--
 
 ## Implementation blueprint
 
-1. `brevia/pipeline.py` — `CondenseResult`, `Estimate`, `condense_book`, `estimate_condense`,
+1. `breviabook/pipeline.py` — `CondenseResult`, `Estimate`, `condense_book`, `estimate_condense`,
    `_parser_for`, `_renderer_for`.
-2. `brevia/cli.py` — implement `condense` (build provider, dry-run branch, run pipeline, print).
+2. `breviabook/cli.py` — implement `condense` (build provider, dry-run branch, run pipeline, print).
 3. Tests: `tests/test_pipeline.py` (mock provider) + a CLI smoke test via Typer's CliRunner.
 
 ### New / changed files
 
-- `brevia/pipeline.py` (new), `brevia/cli.py` (rewire)
+- `breviabook/pipeline.py` (new), `breviabook/cli.py` (rewire)
 - `tests/test_pipeline.py` (new)
 
 ## Validation gates (must all pass)
@@ -84,7 +84,7 @@ translation execution (Phase 10 — `--translate-to` warns), cost numbers in `--
 ```bash
 uv run ruff check .
 uv run ruff format --check .
-uv run mypy --strict brevia
+uv run mypy --strict breviabook
 uv run pytest -q
 uv run pip-licenses --fail-on "GPL"
 ```
@@ -102,7 +102,7 @@ uv run pip-licenses --fail-on "GPL"
 
 ## Acceptance criteria
 
-- [ ] `brevia condense fixture.epub --formats md,epub --out DIR` produces both files end-to-end.
+- [ ] `breviabook condense fixture.epub --formats md,epub --out DIR` produces both files end-to-end.
 - [ ] `--resume` and `--dry-run` behave per §13.4/§13.5.
 - [ ] All five validation gates green.
 

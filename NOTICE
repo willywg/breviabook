@@ -1,4 +1,4 @@
-Brevia
+BreviaBook
 Copyright 2026 William Wong Garay
 
 This product includes software developed by William Wong Garay and contributors.
@@ -12,13 +12,13 @@ file except in compliance with the License. You may obtain a copy of the License
 Attribution (no code reused)
 -------------------------------------------------------------------------------
 
-Brevia's architecture was studied and inspired by the following open-source projects.
-No code from these projects is reused in Brevia; they served as study material only
+BreviaBook's architecture was studied and inspired by the following open-source projects.
+No code from these projects is reused in BreviaBook; they served as study material only
 (clean-room reimplementation — see docs/ROADMAP.md §14):
 
   * TranslateBooksWithLLMs (hydropix)        — provider-layer and checkpoint patterns
   * ollama-ebook-summary (cognitivetech)     — chapter-aware chunking lessons
   * OllamaBook-Summarize (sanjaymarison)     — table-of-contents inference idea
 
-Brevia depends only on permissively licensed (MIT/BSD/Apache) libraries; it uses no
+BreviaBook depends only on permissively licensed (MIT/BSD/Apache) libraries; it uses no
 GPL/AGPL dependencies at runtime.

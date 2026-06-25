@@ -7,10 +7,10 @@ from pathlib import Path
 
 import pytest
 
-from brevia.llm.base import Message
-from brevia.parsers.epub_parser import EpubParser
-from brevia.persistence.checkpoint import CheckpointManager
-from brevia.pipeline import (
+from breviabook.llm.base import Message
+from breviabook.parsers.epub_parser import EpubParser
+from breviabook.persistence.checkpoint import CheckpointManager
+from breviabook.pipeline import (
     condense_book,
     estimate_condense,
     validate_formats,
@@ -74,7 +74,7 @@ async def test_unsupported_input_raises(tmp_path: Path) -> None:
 
 
 async def test_resume_skips_provider_for_done_chunks(tmp_path: Path) -> None:
-    cp_path = tmp_path / ".brevia" / "sample-condensed.jsonl"
+    cp_path = tmp_path / ".breviabook" / "sample-condensed.jsonl"
 
     provider = ScriptedProvider(_REPLY)
     await condense_book(
@@ -98,7 +98,7 @@ async def test_resume_skips_provider_for_done_chunks(tmp_path: Path) -> None:
 
 
 async def test_fresh_run_clears_stale_checkpoint(tmp_path: Path) -> None:
-    cp_path = tmp_path / ".brevia" / "sample-condensed.jsonl"
+    cp_path = tmp_path / ".breviabook" / "sample-condensed.jsonl"
     cp_path.parent.mkdir(parents=True, exist_ok=True)
     cp_path.write_text('{"chunk_id": "stale", "result": {"id": "stale"}}\n', encoding="utf-8")
 
@@ -218,3 +218,30 @@ async def test_rank_images_requires_vision_provider(tmp_path: Path) -> None:
             model="m",
             rank_images=True,
         )
+
+
+async def test_pdf_render_failure_is_skipped_with_warning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # If PDF rendering fails (e.g. weasyprint's system libs are missing), skip just that format
+    # and keep the others, with a warning — never discard the whole already-paid-for run.
+    from breviabook import pipeline as pl
+
+    real = pl._renderer_for
+
+    class BoomPdf:
+        name = "pdf"
+
+        def render(self, doc: object, out_dir: Path, *, stem: str = "x") -> Path:
+            raise RuntimeError("weasyprint system libraries missing")
+
+    monkeypatch.setattr(pl, "_renderer_for", lambda fmt: BoomPdf() if fmt == "pdf" else real(fmt))
+    result = await condense_book(
+        input_path=FIXTURE,
+        out_dir=tmp_path,
+        formats=["md", "pdf"],
+        provider=ScriptedProvider(_REPLY),
+        model="m",
+    )
+    assert {p.name for p in result.output_files} == {"sample-condensed.md"}  # pdf skipped
+    assert any("pdf: skipped" in w for w in result.warnings)

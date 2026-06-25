@@ -1,6 +1,6 @@
 # PRP: Phase 3 — Chunker + checkpoint
 
-> Product Requirement Prompt for **Brevia**. Source of truth: [docs/ROADMAP.md](../docs/ROADMAP.md) §5, §6, §7.2, §9, §10 (Phase 3), §12.
+> Product Requirement Prompt for **BreviaBook**. Source of truth: [docs/ROADMAP.md](../docs/ROADMAP.md) §5, §6, §7.2, §9, §10 (Phase 3), §12.
 > Operating rules: [CLAUDE.md](../CLAUDE.md). Builds on PRP 001 (IR).
 
 ## Goal
@@ -18,12 +18,12 @@ work the Phase 4 condenser consumes, and the persistence the `--resume` flag rel
 ## Scope
 
 **In scope:**
-- `brevia/utils/tokens.py`: `count_tokens(text)` via `tiktoken` with a char-based fallback;
+- `breviabook/utils/tokens.py`: `count_tokens(text)` via `tiktoken` with a char-based fallback;
   `block_text(block)` / `block_tokens(block)` helpers.
-- `brevia/condense/chunker.py`: `Chunk` model + `Chunker(max_tokens).chunk(doc) -> list[Chunk]`.
+- `breviabook/condense/chunker.py`: `Chunk` model + `Chunker(max_tokens).chunk(doc) -> list[Chunk]`.
   Chapter-aware, ~2000-token groups, atomic blocks (code/tables never split), light
   previous-block context for continuity.
-- `brevia/persistence/checkpoint.py`: `CheckpointManager` — durable, append-only per-chunk
+- `breviabook/persistence/checkpoint.py`: `CheckpointManager` — durable, append-only per-chunk
   results (JSONL), resumable, last-write-wins.
 - Tests for all three.
 
@@ -35,15 +35,15 @@ the CLI pipeline.
 - [ ] A `CodeBlock` or `TableBlock` is NEVER split across chunks (blocks are atomic units).
 - [ ] Chunks never cross chapter boundaries.
 - [ ] Chunk size targets ~2000 tokens (`DEFAULT_CHUNK_TOKENS`), **not** ~450.
-- [ ] Checkpoint files are job state — already gitignored (`checkpoints/`, `.brevia/`, `*.sqlite`).
+- [ ] Checkpoint files are job state — already gitignored (`checkpoints/`, `.breviabook/`, `*.sqlite`).
 - [ ] Resuming must not reprocess a chunk already recorded.
 
 ## Context & references
 
 ```yaml
 - docs/ROADMAP.md          # §7.2 chunking rules, §5 checkpoint between [2]-[5], §9 defaults
-- brevia/ir/models.py      # Document/Chapter/Block union
-- brevia/config.py         # default_chunk_tokens
+- breviabook/ir/models.py      # Document/Chapter/Block union
+- breviabook/config.py         # default_chunk_tokens
 # Reference (study, never copy): cognitivetech chunk-size lesson; OllamaBook CHUNK_OVERLAP idea
 ```
 
@@ -76,7 +76,7 @@ the CLI pipeline.
 
 ### New / changed files
 
-- `brevia/utils/tokens.py`, `brevia/condense/chunker.py`, `brevia/persistence/checkpoint.py`
+- `breviabook/utils/tokens.py`, `breviabook/condense/chunker.py`, `breviabook/persistence/checkpoint.py`
 - `tests/test_tokens.py`, `tests/test_chunker.py`, `tests/test_checkpoint.py`
 
 ## Validation gates (must all pass)
@@ -84,7 +84,7 @@ the CLI pipeline.
 ```bash
 uv run ruff check .
 uv run ruff format --check .
-uv run mypy --strict brevia
+uv run mypy --strict breviabook
 uv run pytest -q
 uv run pip-licenses --fail-on "GPL"
 ```

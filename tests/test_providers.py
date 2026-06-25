@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from brevia.llm.key_pool import KeyPool
-from brevia.llm.providers.gemini import GeminiProvider
-from brevia.llm.providers.openai import OpenAIProvider
-from brevia.llm.providers.openrouter import OpenRouterProvider
+from breviabook.llm.key_pool import KeyPool
+from breviabook.llm.providers.gemini import GeminiProvider
+from breviabook.llm.providers.openai import OpenAIProvider
+from breviabook.llm.providers.openrouter import OpenRouterProvider
 
 
 def _response(text: str) -> dict[str, Any]:

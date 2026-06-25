@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from brevia.ir.models import (
+from breviabook.ir.models import (
     CodeBlock,
     HeadingBlock,
     ImageBlock,
@@ -15,8 +15,8 @@ from brevia.ir.models import (
     QuoteBlock,
     TableBlock,
 )
-from brevia.parsers.epub_parser import EpubParser
-from brevia.utils.security import resolve_archive_href
+from breviabook.parsers.epub_parser import EpubParser
+from breviabook.utils.security import resolve_archive_href
 
 FIXTURE = Path(__file__).parent / "fixtures" / "sample.epub"
 
@@ -27,7 +27,7 @@ def doc():
 
 
 def test_metadata(doc) -> None:
-    assert doc.metadata.title == "Brevia Sample Book"
+    assert doc.metadata.title == "BreviaBook Sample Book"
     assert doc.metadata.author == "William Wong Garay"
     assert doc.metadata.language == "en"
     assert doc.metadata.source_format == "epub"

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from brevia.ir.models import (
+from breviabook.ir.models import (
     Chapter,
     CodeBlock,
     Document,

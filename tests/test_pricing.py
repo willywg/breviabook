@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from brevia.llm.pricing import estimate_cost
+from breviabook.llm.pricing import estimate_cost
 
 
 def test_local_model_has_no_price() -> None:

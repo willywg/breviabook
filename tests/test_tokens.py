@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from brevia.ir.models import (
+from breviabook.ir.models import (
     CodeBlock,
     HeadingBlock,
     ImageBlock,
@@ -11,7 +11,7 @@ from brevia.ir.models import (
     QuoteBlock,
     TableBlock,
 )
-from brevia.utils.tokens import block_text, block_tokens, count_tokens
+from breviabook.utils.tokens import block_text, block_tokens, count_tokens
 
 
 def test_count_tokens_empty_is_zero() -> None:

@@ -1,4 +1,4 @@
-# Brevia
+# BreviaBook
 
 > Condense large technical ebooks (EPUB/PDF) into a fast, filler-free version — **preserving
 > code, formulas, and the important diagrams** — and optionally **translate** them in the same
@@ -12,7 +12,7 @@ with Ollama, or via a paid API when it makes sense.
 
 ## Why
 
-Technical books are long and padded. Brevia reads dense books fast without losing the parts
+Technical books are long and padded. BreviaBook reads dense books fast without losing the parts
 that matter — **code examples, tables, and meaningful figures survive; filler doesn't** — and
 can deliver the result in your language (e.g. English → Spanish) in one go.
 
@@ -49,9 +49,10 @@ can deliver the result in your language (e.g. English → Spanish) in one go.
 Requires **Python 3.11+** and [uv](https://docs.astral.sh/uv/).
 
 ```bash
-git clone https://github.com/willywg/brevia.git   # adjust to the final repo URL
-cd brevia
-uv sync --all-extras
+git clone https://github.com/willywg/breviabook.git   # adjust to the final repo URL
+cd breviabook
+uv sync                # EPUB + Markdown — no system libraries needed
+uv sync --extra pdf    # add PDF output (needs the system libs below)
 ```
 
 Copy `.env.example` to `.env` and set what you need (defaults use local Ollama):
@@ -60,10 +61,10 @@ Copy `.env.example` to `.env` and set what you need (defaults use local Ollama):
 cp .env.example .env
 ```
 
-> **Run without cloning (uvx):** Brevia is a CLI, so it also runs via `uvx` straight from git —
-> e.g. `uvx --from "brevia[pdf] @ git+https://github.com/USER/brevia" brevia condense …`.
-> A published-to-PyPI `uvx brevia` install is planned (pending a dependency-extras split so
-> EPUB/Markdown work with no native libraries).
+> **Run without cloning (uvx):** BreviaBook is a CLI, so it also runs via `uvx` straight from git.
+> EPUB + Markdown need nothing extra:
+> `uvx --from "git+https://github.com/USER/breviabook" breviabook condense book.epub --formats epub,md`
+> — add PDF with `"breviabook[pdf] @ git+…"`. A published `uvx breviabook` (PyPI) is planned.
 
 ### PDF output requirements
 
@@ -78,26 +79,26 @@ PDF rendering uses [weasyprint](https://weasyprint.org/), which needs system lib
 
 ```bash
 # Local, all three formats, with Ollama
-uv run brevia condense book.epub --formats epub,pdf,md --out ./out/
+uv run breviabook condense book.epub --formats epub,pdf,md --out ./out/
 
 # Estimate tokens + cost first, without calling the LLM
-uv run brevia condense book.epub --dry-run
+uv run breviabook condense book.epub --dry-run
 
 # Condense + translate to Spanish with a cloud model (Gemini thinking is off by default)
-uv run brevia condense book.epub \
+uv run breviabook condense book.epub \
   --provider gemini --model gemini-3-flash-preview \
   --translate-to Spanish --source-lang English --glossary glossary.json \
   --formats epub,md --out ./out/
 
 # Drop decorative images with a vision model, and resume if interrupted
-uv run brevia condense book.pdf --provider gemini --model gemini-3-flash-preview \
+uv run breviabook condense book.pdf --provider gemini --model gemini-3-flash-preview \
   --rank-images --resume --out ./out/
 ```
 
 ## CLI
 
 ```
-brevia condense INPUT.{epub,pdf} [options]
+breviabook condense INPUT.{epub,pdf} [options]
 
   --provider        ollama | openai | gemini | openrouter        (default: ollama)
   --model           model tag (default from .env)
@@ -120,7 +121,7 @@ brevia condense INPUT.{epub,pdf} [options]
 
 Some cloud models "think" before answering. For condensation/translation — rewriting tasks,
 not reasoning tasks — that thinking is pure waste: on a real run ~94% of output tokens were
-discarded reasoning, billed as output. **Brevia therefore disables thinking by default** for
+discarded reasoning, billed as output. **BreviaBook therefore disables thinking by default** for
 providers that have it on (Gemini). To restore a model's native thinking, pass
 `--reasoning-effort auto` (or set `low`/`medium`/`high` explicitly).
 
@@ -169,13 +170,13 @@ See the full design and build plan in **[docs/ROADMAP.md](docs/ROADMAP.md)**.
 
 ```bash
 uv run ruff check . && uv run ruff format --check .   # lint + format
-uv run mypy --strict brevia                           # types
+uv run mypy --strict breviabook                           # types
 uv run pytest -q                                       # tests
 uv run pip-licenses --fail-on "GPL"                    # license audit (blocks GPL/AGPL)
 ```
 
 ## License
 
-[Apache-2.0](LICENSE). Brevia is **inspired by** open-source work but contains no copied code
+[Apache-2.0](LICENSE). BreviaBook is **inspired by** open-source work but contains no copied code
 and depends on no copyleft (GPL/AGPL) libraries — see [docs/ROADMAP.md §14](docs/ROADMAP.md)
 and [NOTICE](NOTICE).

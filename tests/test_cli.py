@@ -6,7 +6,7 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
-from brevia.cli import app
+from breviabook.cli import app
 
 runner = CliRunner()
 FIXTURE = Path(__file__).parent / "fixtures" / "sample.epub"
@@ -15,7 +15,7 @@ FIXTURE = Path(__file__).parent / "fixtures" / "sample.epub"
 def test_version() -> None:
     result = runner.invoke(app, ["version"])
     assert result.exit_code == 0
-    assert "brevia" in result.stdout
+    assert "breviabook" in result.stdout
 
 
 def test_dry_run_reports_estimate_without_llm() -> None:

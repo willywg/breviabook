@@ -1,6 +1,6 @@
 # PRP: Phase 12 — Polish
 
-> Product Requirement Prompt for **Brevia**. Source of truth: [docs/ROADMAP.md](../docs/ROADMAP.md) §8, §10 (Phase 12), §13.
+> Product Requirement Prompt for **BreviaBook**. Source of truth: [docs/ROADMAP.md](../docs/ROADMAP.md) §8, §10 (Phase 12), §13.
 > Operating rules: [CLAUDE.md](../CLAUDE.md). Final roadmap phase.
 
 ## Goal
@@ -40,11 +40,11 @@ user **README**. Logging already flows through the rich `log` callback.
 ## Context & references
 
 ```yaml
-- brevia/pipeline.py            # estimate_condense / condense_book
-- brevia/condense/synthesizer.py # length-control loop to guard
-- brevia/llm/providers/litellm_base.py # completion_cost (post-run) for reference
+- breviabook/pipeline.py            # estimate_condense / condense_book
+- breviabook/condense/synthesizer.py # length-control loop to guard
+- breviabook/llm/providers/litellm_base.py # completion_cost (post-run) for reference
 - litellm.cost_per_token(model="<route>/<model>", prompt_tokens=, completion_tokens=)
-- memory: brevia-phase12-todos (the deferred trim guard)
+- memory: breviabook-phase12-todos (the deferred trim guard)
 ```
 
 ## Design
@@ -68,7 +68,7 @@ user **README**. Logging already flows through the rich `log` callback.
 ## Validation gates (must all pass)
 
 ```bash
-uv run ruff check . && uv run ruff format --check . && uv run mypy --strict brevia
+uv run ruff check . && uv run ruff format --check . && uv run mypy --strict breviabook
 uv run pytest -q && uv run pip-licenses --fail-on "GPL"
 ```
 
@@ -83,9 +83,9 @@ uv run pytest -q && uv run pip-licenses --fail-on "GPL"
 
 ## Acceptance criteria
 
-- [ ] `brevia condense book.epub --dry-run` shows estimated tokens + approximate cost, no LLM call.
+- [ ] `breviabook condense book.epub --dry-run` shows estimated tokens + approximate cost, no LLM call.
 - [ ] No more wasted trim passes on small chapters.
-- [ ] All five validation gates green. Brevia is feature-complete per the spec.
+- [ ] All five validation gates green. BreviaBook is feature-complete per the spec.
 
 ## Confidence score
 

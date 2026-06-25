@@ -1,6 +1,6 @@
 # PRP: Phase 10 — Integrated translation + glossary
 
-> Product Requirement Prompt for **Brevia**. Source of truth: [docs/ROADMAP.md](../docs/ROADMAP.md) §6, §7.5, §10 (Phase 10).
+> Product Requirement Prompt for **BreviaBook**. Source of truth: [docs/ROADMAP.md](../docs/ROADMAP.md) §6, §7.5, §10 (Phase 10).
 > Operating rules: [CLAUDE.md](../CLAUDE.md). Builds on PRP 005 (synthesis) and PRP 009 (providers).
 
 ## Goal
@@ -41,10 +41,10 @@ for v1), separate translation checkpoint (condense is already checkpointed).
 
 ```yaml
 - docs/ROADMAP.md          # §7.5 integrated translation, §2.1 glossary idea
-- brevia/ir/models.py      # block types; model_copy for rebuilds
-- brevia/llm/base.py       # LLMProvider
-- brevia/utils/jsonx.py    # extract_json_object
-- brevia/pipeline.py       # insert translation after synthesis
+- breviabook/ir/models.py      # block types; model_copy for rebuilds
+- breviabook/llm/base.py       # LLMProvider
+- breviabook/utils/jsonx.py    # extract_json_object
+- breviabook/pipeline.py       # insert translation after synthesis
 # Study (never copy): TBL glossary + preserve_technical_content prompt idea
 ```
 
@@ -66,14 +66,14 @@ for v1), separate translation checkpoint (condense is already checkpointed).
 
 ### New / changed files
 
-- `brevia/translate/glossary.py`, `brevia/translate/translator.py`
-- `brevia/pipeline.py`, `brevia/cli.py`
+- `breviabook/translate/glossary.py`, `breviabook/translate/translator.py`
+- `breviabook/pipeline.py`, `breviabook/cli.py`
 - tests as above
 
 ## Validation gates (must all pass)
 
 ```bash
-uv run ruff check . && uv run ruff format --check . && uv run mypy --strict brevia
+uv run ruff check . && uv run ruff format --check . && uv run mypy --strict breviabook
 uv run pytest -q && uv run pip-licenses --fail-on "GPL"
 ```
 
@@ -90,7 +90,7 @@ uv run pytest -q && uv run pip-licenses --fail-on "GPL"
 ## Acceptance criteria
 
 - [ ] `Translator(mock).translate_document(doc)` returns a translated IR with structure intact.
-- [ ] `brevia condense book.epub --translate-to Spanish [--glossary g.json]` works end-to-end.
+- [ ] `breviabook condense book.epub --translate-to Spanish [--glossary g.json]` works end-to-end.
 - [ ] All five validation gates green.
 
 ## Confidence score

@@ -1,12 +1,12 @@
 # PRP: Phase 1 — IR + EPUB parser
 
-> Product Requirement Prompt for **Brevia**. Source of truth: [docs/ROADMAP.md](../docs/ROADMAP.md) §3, §6, §7.1, §10 (Phase 1), §11.
+> Product Requirement Prompt for **BreviaBook**. Source of truth: [docs/ROADMAP.md](../docs/ROADMAP.md) §3, §6, §7.1, §10 (Phase 1), §11.
 > Operating rules: [CLAUDE.md](../CLAUDE.md). Builds on PRP 000 (scaffold).
 
 ## Goal
 
-Define the **Intermediate Representation** (`brevia/ir/models.py`) and a license-clean
-**EPUB parser** (`brevia/parsers/epub_parser.py`) that turns an `.epub` into a `Document`,
+Define the **Intermediate Representation** (`breviabook/ir/models.py`) and a license-clean
+**EPUB parser** (`breviabook/parsers/epub_parser.py`) that turns an `.epub` into a `Document`,
 extracting every image as an `ImageAsset` referenced by id. Prove it on a committed fixture
 EPUB without losing blocks or images.
 
@@ -20,10 +20,10 @@ EPUB without losing blocks or images.
 ## Scope
 
 **In scope:**
-- `brevia/ir/models.py`: `Document`, `DocumentMetadata`, `Chapter`, `ImageAsset`, and the
+- `breviabook/ir/models.py`: `Document`, `DocumentMetadata`, `Chapter`, `ImageAsset`, and the
   `Block` discriminated union (heading/paragraph/code/image/table/quote/list) — all pydantic v2.
-- `brevia/parsers/base.py`: `Parser` Protocol (`parse(path) -> Document`).
-- `brevia/parsers/epub_parser.py`: our own EPUB reader using `zipfile` (stdlib) +
+- `breviabook/parsers/base.py`: `Parser` Protocol (`parse(path) -> Document`).
+- `breviabook/parsers/epub_parser.py`: our own EPUB reader using `zipfile` (stdlib) +
   `lxml`/`beautifulsoup4` — **no ebooklib**. Reads `container.xml` → `.opf` (spine + manifest),
   walks each spine XHTML into blocks, extracts `<img>` into `ImageAsset` + `ImageBlock`.
 - A committed fixture `tests/fixtures/sample.epub` plus the small builder that produced it.
@@ -36,7 +36,7 @@ any LLM call.
 
 - [ ] No `ebooklib`/`PyMuPDF`. Use `zipfile` + `lxml`/`bs4` (already in the `formats` extra).
 - [ ] **Zip-slip:** resolve every archive-internal href safely; reject paths escaping the
-      archive root (use/extend `brevia/utils/security.py`). We read in-memory, but still
+      archive root (use/extend `breviabook/utils/security.py`). We read in-memory, but still
       validate normalized paths.
 - [ ] `code` blocks captured verbatim — never reflowed, escaped away, or split.
 - [ ] Every original image becomes exactly one `ImageAsset` with a unique `image_id`.
@@ -45,8 +45,8 @@ any LLM call.
 
 ```yaml
 - docs/ROADMAP.md           # §3 IR shape, §6 layout, §7.1 image handling, §11 tests
-- brevia/utils/security.py  # safe_extract_path — extend for href resolution
-- brevia/config.py          # source_format value style
+- breviabook/utils/security.py  # safe_extract_path — extend for href resolution
+- breviabook/config.py          # source_format value style
 # EPUB structure:
 - container.xml -> rootfile @full-path -> the .opf
 - .opf: <manifest><item id href media-type> + <spine><itemref idref> (reading order)
@@ -86,9 +86,9 @@ any LLM call.
 
 ### New / changed files
 
-- `brevia/ir/models.py`
-- `brevia/parsers/base.py`, `brevia/parsers/epub_parser.py`
-- `brevia/utils/security.py` (extend with href resolver if needed)
+- `breviabook/ir/models.py`
+- `breviabook/parsers/base.py`, `breviabook/parsers/epub_parser.py`
+- `breviabook/utils/security.py` (extend with href resolver if needed)
 - `tests/fixtures/_build_sample_epub.py`, `tests/fixtures/sample.epub`
 - `tests/test_ir_models.py`, `tests/test_epub_parser.py`
 
@@ -97,7 +97,7 @@ any LLM call.
 ```bash
 uv run ruff check .
 uv run ruff format --check .
-uv run mypy --strict brevia
+uv run mypy --strict breviabook
 uv run pytest -q
 uv run pip-licenses --fail-on "GPL"
 ```

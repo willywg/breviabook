@@ -6,9 +6,9 @@ from io import StringIO
 
 from rich.console import Console
 
-from brevia.llm.usage import Usage
-from brevia.ui.banner import banner_renderable, print_banner
-from brevia.ui.progress import LogReporter, NullReporter, ProgressReporter, RunReporter
+from breviabook.llm.usage import Usage
+from breviabook.ui.banner import banner_renderable, print_banner
+from breviabook.ui.progress import LogReporter, NullReporter, ProgressReporter, RunReporter
 
 
 def _console() -> tuple[Console, StringIO]:
@@ -16,10 +16,11 @@ def _console() -> tuple[Console, StringIO]:
     return Console(file=buf, force_terminal=True, width=88, color_system=None), buf
 
 
-def test_banner_mentions_brevia_and_tagline() -> None:
+def test_banner_mentions_breviabook_and_tagline() -> None:
     console, buf = _console()
     print_banner(console)
     out = buf.getvalue()
+    assert "BreviaBook" in out
     assert "condense" in out and "figures" in out
     assert banner_renderable() is not None  # builds without error
 

@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from brevia.images.selector import ImageSelector
-from brevia.ir.models import (
+from breviabook.images.selector import ImageSelector
+from breviabook.ir.models import (
     Chapter,
     Document,
     DocumentMetadata,

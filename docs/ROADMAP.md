@@ -1,8 +1,8 @@
-# Brevia — Build Specification & Roadmap
+# BreviaBook — Build Specification & Roadmap
 
 > **For Claude Code:** this document is the complete project specification. Build it following the phases in order. Read the "Core architectural principle" section first — it's the design decision that makes everything else possible.
 >
-> **Project name:** `Brevia`. Use it as the Python package name (`brevia/`).
+> **Project name:** `BreviaBook`. Use it as the Python package name (`breviabook/`).
 >
 > **License:** **Apache-2.0** (permissive, with an explicit patent grant — important in the LLM space). To keep it clean, this project **does not copy code from the reference repos and does not use AGPL dependencies** — see §14, which is required reading.
 >
@@ -93,7 +93,7 @@ Benefit: adding an input or output format = writing one parser or one renderer, 
 
 ## 4. Tech stack
 
-> **License rule (see §14):** all runtime dependencies must be permissive (MIT/BSD/Apache). **AGPL is forbidden** because it would drag Brevia into AGPL even if we don't copy any code. This rules out `ebooklib` and `PyMuPDF` (both AGPL-3.0), which were the obvious choice but would tie us down.
+> **License rule (see §14):** all runtime dependencies must be permissive (MIT/BSD/Apache). **AGPL is forbidden** because it would drag BreviaBook into AGPL even if we don't copy any code. This rules out `ebooklib` and `PyMuPDF` (both AGPL-3.0), which were the obvious choice but would tie us down.
 
 - **Python 3.11+**
 - **CLI:** `typer` (+ `rich` for progress/tables). *(MIT)*
@@ -151,7 +151,7 @@ Benefit: adding an input or output format = writing one parser or one renderer, 
 ## 6. Proposed folder structure
 
 ```
-brevia/
+breviabook/
   __init__.py
   cli.py                 # typer entrypoint
   config.py              # pydantic settings + .env
@@ -240,7 +240,7 @@ Since the owner wants it **in the same pass**: after condensing (and before rend
 ## 8. CLI design
 
 ```bash
-brevia condense INPUT.epub \
+breviabook condense INPUT.epub \
   --provider ollama \              # ollama|openai|gemini|openrouter
   --model qwen3:14b \
   --api-endpoint URL \             # optional, for OpenAI-compatible (vLLM/LM Studio)
@@ -326,7 +326,7 @@ Detected in TBL's real issues/code — avoid them by design:
 
 ## 13. v1 acceptance criteria
 
-1. `brevia condense book.epub --provider ollama --model qwen3:14b --formats epub,pdf,md --out ./out/` produces all three files.
+1. `breviabook condense book.epub --provider ollama --model qwen3:14b --formats epub,pdf,md --out ./out/` produces all three files.
 2. The condensed EPUB opens in a standard reader, weighs a fraction of the original, and **keeps the code blocks and the images that remained in retained sections**.
 3. With `--translate-to Spanish`, the condensed content comes out in Spanish, with code untranslated.
 4. `--resume` resumes an interrupted job without redoing already-processed chunks.
@@ -337,20 +337,20 @@ Detected in TBL's real issues/code — avoid them by design:
 
 ## 14. Licensing and how to stay clean (clean-room)
 
-> I'm not a lawyer and this isn't legal advice; it's the standard engineering practice for not inheriting copyleft obligations. If Brevia becomes a serious product, a real legal review is worthwhile.
+> I'm not a lawyer and this isn't legal advice; it's the standard engineering practice for not inheriting copyleft obligations. If BreviaBook becomes a serious product, a real legal review is worthwhile.
 
 **The key principle:** copyright protects the **expression** (the code as written), **not the ideas, the architecture, the algorithms, or the APIs**. Drawing inspiration from how TBL solves the problem and reimplementing it with your own code does **not** bind you to its AGPL. What binds you is **copying its code**.
 
 There are **two contagion channels** for AGPL, and both must be blocked:
 
 **Channel 1 — Copying code.** Concrete rules:
-- **Never** copy/paste code from TBL (nor from cognitivetech / OllamaBook-Summarize) into `brevia/`. Not "disguised line-by-line translation" either — that's still a derivative work.
-- Keep the reference repos **outside** the Brevia repo (in `~/projects/open-source/`). **Don't vendor them** or add them as a submodule.
+- **Never** copy/paste code from TBL (nor from cognitivetech / OllamaBook-Summarize) into `breviabook/`. Not "disguised line-by-line translation" either — that's still a derivative work.
+- Keep the reference repos **outside** the BreviaBook repo (in `~/projects/open-source/`). **Don't vendor them** or add them as a submodule.
 - Clean-room flow: read to **understand** the pattern → close the file → implement from *this* spec, with your own structure, names, and style. What's in §2 is "what to study," not "what to copy."
 - Where TBL solves a generic problem, **use a permissive library** instead of porting its code. Examples: `LiteLLM` (MIT) instead of porting `src/core/llm/providers/`; your own EPUB with `zipfile` instead of its `epub/`. This removes the temptation and the risk at the root.
 - Attribution is good faith and fine: a `NOTICE` saying *"architecture studied and inspired by TranslateBooksWithLLMs and ollama-ebook-summary; no code reused."* Attribution by itself does **not** create AGPL obligations (what would create them is using their code).
 
-**Channel 2 — Depending on AGPL libraries at runtime.** Even if you copy nothing, if Brevia *imports* an AGPL library, distributing or exposing Brevia as a service inherits the AGPL obligations. Therefore:
+**Channel 2 — Depending on AGPL libraries at runtime.** Even if you copy nothing, if BreviaBook *imports* an AGPL library, distributing or exposing BreviaBook as a service inherits the AGPL obligations. Therefore:
 - **Forbidden at runtime:** `ebooklib` (AGPL-3.0) and `PyMuPDF`/`fitz` (AGPL-3.0). Confirmed on their repos/PyPI.
 - Permissive substitutes already chosen in §4: own EPUB with `zipfile`+`lxml`; PDF with `pdfplumber` (MIT) + `pypdf` (BSD); output PDF with `weasyprint` (BSD).
 - Dependency license table (verify when pinning versions; licenses can change):
@@ -363,10 +363,10 @@ There are **two contagion channels** for AGPL, and both must be blocked:
 | **ebooklib** | **AGPL-3.0** | ❌ do not use |
 | **PyMuPDF / fitz** | **AGPL-3.0** | ❌ do not use |
 
-**Brevia's license: Apache-2.0.** With both channels blocked, you're free to choose; we go with **Apache-2.0** because it's fully permissive (free for the community: anyone can use, modify, and even integrate it into closed products) and additionally includes an **explicit patent grant** and retaliation clause — relevant in the LLM space, where patents are a latent risk; it protects both the project and adopters from a contributor later asserting a patent. It lets you turn Brevia into a closed product later without issue. (MIT would be the more minimalist and also valid alternative; Apache was chosen for the extra patent-protection layer.)
+**BreviaBook's license: Apache-2.0.** With both channels blocked, you're free to choose; we go with **Apache-2.0** because it's fully permissive (free for the community: anyone can use, modify, and even integrate it into closed products) and additionally includes an **explicit patent grant** and retaliation clause — relevant in the LLM space, where patents are a latent risk; it protects both the project and adopters from a contributor later asserting a patent. It lets you turn BreviaBook into a closed product later without issue. (MIT would be the more minimalist and also valid alternative; Apache was chosen for the extra patent-protection layer.)
 
 **Pre-publish checklist:**
-1. Safety `grep`: no Brevia file contains blocks copied from the reference repos.
+1. Safety `grep`: no BreviaBook file contains blocks copied from the reference repos.
 2. CI green: `pip-licenses --fail-on "GPL"` passes, confirming no dependency (direct or transitive) is GPL/AGPL.
 3. `LICENSE` exists with **Apache-2.0** and `NOTICE` with the inspiration attribution.
 4. The reference repos are not inside the project tree.

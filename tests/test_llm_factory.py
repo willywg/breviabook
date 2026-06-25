@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import pytest
 
-from brevia.config import Settings
-from brevia.llm.base import LLMProvider
-from brevia.llm.factory import get_provider
-from brevia.llm.providers.gemini import GeminiProvider
-from brevia.llm.providers.ollama import OllamaProvider
-from brevia.llm.providers.openai import OpenAIProvider
-from brevia.llm.providers.openrouter import OpenRouterProvider
+from breviabook.config import Settings
+from breviabook.llm.base import LLMProvider
+from breviabook.llm.factory import get_provider
+from breviabook.llm.providers.gemini import GeminiProvider
+from breviabook.llm.providers.ollama import OllamaProvider
+from breviabook.llm.providers.openai import OpenAIProvider
+from breviabook.llm.providers.openrouter import OpenRouterProvider
 from tests.conftest import MockProvider
 
 

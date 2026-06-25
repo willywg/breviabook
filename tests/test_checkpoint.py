@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from brevia.persistence.checkpoint import CheckpointManager
+from breviabook.persistence.checkpoint import CheckpointManager
 
 
 def test_record_and_query(tmp_path: Path) -> None:

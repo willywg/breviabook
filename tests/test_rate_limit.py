@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from brevia.llm.key_pool import KeyPool
-from brevia.llm.rate_limit import is_auth_error, is_rate_limit_error, with_key_rotation
+from breviabook.llm.key_pool import KeyPool
+from breviabook.llm.rate_limit import is_auth_error, is_rate_limit_error, with_key_rotation
 
 
 class RateLimitError(Exception):

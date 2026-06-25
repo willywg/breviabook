@@ -44,8 +44,8 @@ CONTAINER = """<?xml version="1.0" encoding="UTF-8"?>
 OPF = """<?xml version="1.0" encoding="UTF-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="bookid">
   <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
-    <dc:identifier id="bookid">urn:uuid:brevia-sample-0001</dc:identifier>
-    <dc:title>Brevia Sample Book</dc:title>
+    <dc:identifier id="bookid">urn:uuid:breviabook-sample-0001</dc:identifier>
+    <dc:title>BreviaBook Sample Book</dc:title>
     <dc:creator>William Wong Garay</dc:creator>
     <dc:language>en</dc:language>
   </metadata>

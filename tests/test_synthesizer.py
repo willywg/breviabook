@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import json
 
-from brevia.condense.condenser import CondensedChunk
-from brevia.condense.synthesizer import Synthesizer, synthesized_to_document
-from brevia.ir.models import (
+from breviabook.condense.condenser import CondensedChunk
+from breviabook.condense.synthesizer import Synthesizer, synthesized_to_document
+from breviabook.ir.models import (
     CodeBlock,
     Document,
     DocumentMetadata,
@@ -14,7 +14,7 @@ from brevia.ir.models import (
     ImageBlock,
     ParagraphBlock,
 )
-from brevia.llm.base import Message
+from breviabook.llm.base import Message
 
 
 class QueueProvider:
