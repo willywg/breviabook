@@ -21,6 +21,8 @@ from brevia.llm.factory import get_provider
 from brevia.parsers.pdf_parser import TocEntry, load_manual_toc
 from brevia.pipeline import condense_book, estimate_condense, validate_formats
 from brevia.translate.glossary import Glossary
+from brevia.ui.banner import print_banner
+from brevia.ui.progress import LogReporter, RunReporter
 
 app = typer.Typer(
     name="brevia",
@@ -129,29 +131,39 @@ def condense(
         console.print(f"[red]{exc}[/]")
         raise typer.Exit(code=1) from exc
 
+    if console.is_terminal:
+        print_banner(console)
     console.print(
         f"[bold]Condensing[/] {input_file.name} → {', '.join(fmts)} "
         f"(provider={provider}, model={resolved_model}, ratio={resolved_ratio:.2f})"
     )
+
+    usage_source = getattr(llm, "usage", None)
+    reporter = (
+        RunReporter(console, usage_source=usage_source)
+        if console.is_terminal
+        else LogReporter(lambda msg: console.print(f"[dim]· {msg}[/]"))
+    )
     try:
-        result = asyncio.run(
-            condense_book(
-                input_path=input_file,
-                out_dir=out,
-                formats=fmts,
-                provider=llm,
-                model=resolved_model,
-                target_ratio=resolved_ratio,
-                chunk_tokens=settings.default_chunk_tokens,
-                resume=resume,
-                translate_to=translate_to,
-                source_lang=source_lang,
-                glossary=glossary_obj,
-                rank_images=rank_images,
-                manual_toc=toc,
-                log=lambda msg: console.print(f"[dim]· {msg}[/]"),
+        with reporter:
+            result = asyncio.run(
+                condense_book(
+                    input_path=input_file,
+                    out_dir=out,
+                    formats=fmts,
+                    provider=llm,
+                    model=resolved_model,
+                    target_ratio=resolved_ratio,
+                    chunk_tokens=settings.default_chunk_tokens,
+                    resume=resume,
+                    translate_to=translate_to,
+                    source_lang=source_lang,
+                    glossary=glossary_obj,
+                    rank_images=rank_images,
+                    manual_toc=toc,
+                    reporter=reporter,
+                )
             )
-        )
     except (NotImplementedError, ValueError) as exc:
         console.print(f"[red]{exc}[/]")
         raise typer.Exit(code=1) from exc

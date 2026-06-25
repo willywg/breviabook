@@ -9,6 +9,8 @@ original text. Uses the same provider as condensation, so usage/cost accrues aut
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from brevia.ir.models import (
     Block,
     Chapter,
@@ -76,8 +78,17 @@ class Translator:
         self.source_lang = source_lang
         self.glossary = glossary
 
-    async def translate_document(self, doc: Document) -> Document:
-        chapters = [await self.translate_chapter(ch) for ch in doc.chapters]
+    async def translate_document(
+        self,
+        doc: Document,
+        *,
+        on_progress: Callable[[Chapter], None] | None = None,
+    ) -> Document:
+        chapters: list[Chapter] = []
+        for ch in doc.chapters:
+            chapters.append(await self.translate_chapter(ch))
+            if on_progress is not None:
+                on_progress(chapters[-1])
         return Document(metadata=doc.metadata, images=doc.images, chapters=chapters)
 
     async def translate_chapter(self, chapter: Chapter) -> Chapter:

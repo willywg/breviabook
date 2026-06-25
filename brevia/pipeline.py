@@ -31,6 +31,7 @@ from brevia.render.md_renderer import MarkdownRenderer
 from brevia.render.pdf_renderer import PdfRenderer
 from brevia.translate.glossary import Glossary
 from brevia.translate.translator import Translator
+from brevia.ui.progress import LogReporter, NullReporter, ProgressReporter
 from brevia.utils.tokens import block_tokens
 
 SUPPORTED_FORMATS = ("md", "epub", "pdf")
@@ -177,21 +178,25 @@ async def condense_book(
     manual_toc: list[TocEntry] | None = None,
     infer_pages: int = 20,
     log: Log = _noop,
+    reporter: ProgressReporter | None = None,
 ) -> CondenseResult:
     """Run the full condensation pipeline and write the requested output formats."""
+    if reporter is None:
+        reporter = LogReporter(log) if log is not _noop else NullReporter()
     fmts = validate_formats(formats)
     out_dir.mkdir(parents=True, exist_ok=True)
     stem = f"{input_path.stem}-condensed"
     warnings: list[str] = []
 
-    log(f"Parsing {input_path.name} …")
+    reporter.phase("Parse", total=1)
     doc = await _parse_input(
         input_path, manual_toc=manual_toc, provider=provider, model=model, infer_pages=infer_pages
     )
     input_tokens = count_document_tokens(doc)
 
     chunks = Chunker(chunk_tokens).chunk(doc)
-    log(f"Document: {len(doc.chapters)} chapters, {len(chunks)} chunks, ~{input_tokens} tokens")
+    reporter.advance()
+    reporter.note(f"{len(doc.chapters)} chapters · {len(chunks)} chunks · ~{input_tokens:,} tokens")
 
     checkpoint_path = checkpoint_path or (out_dir / ".brevia" / f"{stem}.jsonl")
     checkpoint = CheckpointManager(checkpoint_path)
@@ -199,25 +204,32 @@ async def condense_book(
         checkpoint.clear()
     reused_before = len(checkpoint.results())
 
-    log("Condensing chunks …")
+    reporter.phase("Condense", total=len(chunks))
     condenser = Condenser(provider, model, target_ratio)
-    condensed = await condenser.condense(chunks, checkpoint=checkpoint)
+    condensed = await condenser.condense(
+        chunks, checkpoint=checkpoint, on_progress=lambda _cc: reporter.advance()
+    )
     warnings.extend(
         f"chunk {cc.id}: condensed output longer than input"
         for cc in condensed
         if cc.output_longer_than_input
     )
 
-    log("Synthesizing chapters …")
-    chapters = await Synthesizer(provider, model, target_ratio).synthesize(condensed)
+    n_chapters = len({cc.chapter_index for cc in condensed})
+    reporter.phase("Synthesize", total=n_chapters)
+    chapters = await Synthesizer(provider, model, target_ratio).synthesize(
+        condensed, on_progress=lambda _ch: reporter.advance()
+    )
     condensed_doc = synthesized_to_document(doc, chapters)
 
     if translate_to:
-        log(f"Translating to {translate_to} …")
+        reporter.phase("Translate", total=len(condensed_doc.chapters))
         translator = Translator(
             provider, model, translate_to, source_lang=source_lang, glossary=glossary
         )
-        condensed_doc = await translator.translate_document(condensed_doc)
+        condensed_doc = await translator.translate_document(
+            condensed_doc, on_progress=lambda _ch: reporter.advance()
+        )
 
     if rank_images and condensed_doc.images:
         if not isinstance(provider, VisionProvider):
@@ -225,16 +237,18 @@ async def condense_book(
                 "--rank-images needs a vision-capable provider/model (e.g. gemini); "
                 f"{getattr(provider, 'name', 'provider')!r} does not support images."
             )
-        log("Ranking images (vision) …")
+        reporter.phase("Rank images", total=1)
         condensed_doc = await VisionRanker(provider, model).rank(condensed_doc)
+        reporter.advance()
 
     selected = ImageSelector().select(condensed_doc)
     final_doc = selected.document
 
+    reporter.phase("Render", total=len(fmts))
     output_files: list[Path] = []
     for fmt in fmts:
-        log(f"Rendering {fmt} …")
         output_files.append(_render(fmt, final_doc, out_dir, stem))
+        reporter.advance()
 
     usage = getattr(provider, "usage", None)
     return CondenseResult(
