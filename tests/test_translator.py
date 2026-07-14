@@ -276,6 +276,88 @@ async def test_failed_batch_not_checkpointed(tmp_path: Path) -> None:
     assert len(cp.results()) == 0
 
 
+class PartialProvider:
+    """Answers with valid JSON that is missing the last segment of every batch."""
+
+    name = "partial"
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def generate(self, messages: list[Message], model: str, **opts: object) -> str:
+        self.calls += 1
+        prompt = messages[-1]["content"]
+        uids = [line[1 : line.index("]")] for line in prompt.splitlines() if line.startswith("[")]
+        return _translations({uid: f"ES-{uid}" for uid in uids[:-1]})  # drops the last one
+
+
+async def test_partial_batch_not_checkpointed(tmp_path: Path) -> None:
+    """A batch answered only in part must not be cached: the gaps must stay retryable.
+
+    Caching it would freeze the missing segments in the source language forever (no --resume
+    would retry them) and zero out ``untranslated_units`` on the resumed run, so a run with
+    untranslated text would report a clean success.
+    """
+    cp_path = tmp_path / "checkpoint.jsonl"
+    chapter = Chapter(blocks=[ParagraphBlock(text=f"p{i}") for i in (1, 2, 3)])
+
+    provider = PartialProvider()
+    t1 = Translator(provider, "m", "Spanish", checkpoint=CheckpointManager(cp_path))
+    out1 = await t1.translate_chapter(chapter)
+
+    assert t1.untranslated_units == 1
+    assert [b.text for b in out1.blocks] == ["ES-1", "ES-2", "p3"]  # 3rd fell back to source
+    assert len(CheckpointManager(cp_path).results()) == 0  # nothing cached
+
+    # Resume with a provider that answers fully: the batch is retried, not served from cache.
+    good = CountingProvider("ES")
+    t2 = Translator(good, "m", "Spanish", checkpoint=CheckpointManager(cp_path))
+    out2 = await t2.translate_chapter(chapter)
+
+    assert good.calls == 1  # re-translated, not reused
+    assert t2.reused_batches == 0
+    assert t2.untranslated_units == 0
+    assert all(b.text.startswith("ES") for b in out2.blocks)  # nothing left in the source language
+
+
+async def test_response_ids_outside_the_batch_are_ignored() -> None:
+    """Only the ids we asked for are accepted; a stray id must not overwrite another unit."""
+    chapter = Chapter(blocks=[ParagraphBlock(text="p1"), ParagraphBlock(text="p2")])
+    # The model answers our two ids plus "7", which belongs to no unit in this chapter.
+    provider = ScriptedProvider(_translations({"1": "uno", "2": "dos", "7": "basura"}))
+    t = Translator(provider, "m", "Spanish", checkpoint=None)
+
+    out = await t.translate_chapter(chapter)
+
+    assert [b.text for b in out.blocks] == ["uno", "dos"]
+    assert t.untranslated_units == 0  # "7" must not be counted as a translated unit either
+
+
+async def test_incomplete_checkpoint_record_is_ignored(tmp_path: Path) -> None:
+    """A record that matches the fingerprint but misses units is a miss, not a partial hit."""
+    cp_path = tmp_path / "checkpoint.jsonl"
+    chapter = Chapter(blocks=[ParagraphBlock(text=f"p{i}") for i in (1, 2)])
+    units = {"1": "p1", "2": "p2"}
+
+    # Hand-craft a truncated record (e.g. from a torn write) covering only unit "1".
+    cp = CheckpointManager(cp_path)
+    cp.record(
+        "tr:0:0",
+        {
+            "source_hash": _batch_fingerprint(units, "Spanish", None, None),
+            "translations": {"1": "uno"},
+        },
+    )
+
+    provider = CountingProvider("ES")
+    t = Translator(provider, "m", "Spanish", checkpoint=CheckpointManager(cp_path))
+    out = await t.translate_chapter(chapter)
+
+    assert provider.calls == 1  # re-translated rather than partially reused
+    assert t.reused_batches == 0
+    assert [b.text for b in out.blocks] == ["ES1", "ES2"]
+
+
 async def test_checkpoint_resume_produces_identical_output(tmp_path: Path) -> None:
     cp_path = tmp_path / "checkpoint.jsonl"
     chapter = Chapter(blocks=[ParagraphBlock(text=f"p{i}") for i in range(100)])

@@ -36,6 +36,12 @@ class TranslateError(Exception):
     """Raised when a translation response cannot be parsed."""
 
 
+# Units per LLM call. One giant JSON per chapter is fragile (a single malformed string fails the
+# whole chapter); smaller batches isolate failures. The dry-run estimate reads this too, so the
+# estimated call count cannot drift from the real one.
+DEFAULT_UNITS_PER_BATCH = 40
+
+
 def build_translate_messages(
     units: dict[str, str],
     target_lang: str,
@@ -78,7 +84,7 @@ class Translator:
         *,
         source_lang: str | None = None,
         glossary: Glossary | None = None,
-        max_units_per_batch: int = 40,
+        max_units_per_batch: int = DEFAULT_UNITS_PER_BATCH,
         max_retries: int = 2,
         checkpoint: CheckpointManager | None = None,
     ) -> None:
@@ -162,21 +168,41 @@ class Translator:
                 batch, self.target_lang, self.source_lang, self.glossary
             )
             if cp is not None:
-                payload = cp.get(key)
-                if payload is not None and payload.get("source_hash") == source_hash:
-                    cached = payload.get("translations")
-                    if isinstance(cached, dict):
-                        out.update(
-                            {str(k): str(v) for k, v in cached.items() if isinstance(v, str)}
-                        )
-                        self.reused_batches += 1
-                        continue
+                cached = self._cached_batch(cp, key, source_hash, batch)
+                if cached is not None:
+                    out.update(cached)
+                    self.reused_batches += 1
+                    continue
             translated = await self._translate_batch_resilient(batch)
             out.update(translated)
             self.untranslated_units += len(batch) - len(translated)
-            if cp is not None and translated:
+            # Only a COMPLETE batch is cacheable. A model can answer with valid JSON that is
+            # missing segments; caching that would freeze those segments in the source language
+            # forever (no --resume would ever retry them) and silence untranslated_units on the
+            # resumed run — a clean-looking run hiding untranslated text.
+            if cp is not None and len(translated) == len(batch):
                 cp.record(key, {"source_hash": source_hash, "translations": translated})
         return out
+
+    @staticmethod
+    def _cached_batch(
+        cp: CheckpointManager, key: str, source_hash: str, batch: dict[str, str]
+    ) -> dict[str, str] | None:
+        """Return the cached translations for ``batch``, or ``None`` to translate it again.
+
+        A record is reused only when it matches the source fingerprint *and* covers every unit
+        in the batch, so a truncated or hand-edited checkpoint can never silently drop segments.
+        """
+        payload = cp.get(key)
+        if payload is None or payload.get("source_hash") != source_hash:
+            return None
+        cached = payload.get("translations")
+        if not isinstance(cached, dict):
+            return None
+        translations = {str(k): v for k, v in cached.items() if isinstance(v, str)}
+        if set(translations) != set(batch):
+            return None
+        return translations
 
     async def _translate_batch_resilient(self, batch: dict[str, str]) -> dict[str, str]:
         last_error: TranslateError | None = None
@@ -202,7 +228,9 @@ class Translator:
         result: dict[str, str] = {}
         if isinstance(translations_raw, dict):
             for key, value in translations_raw.items():
-                if isinstance(value, str):
+                # Keep only the ids we asked for. A model that echoes an id from another batch
+                # would otherwise overwrite that unit's real translation with unrelated text.
+                if isinstance(value, str) and str(key) in units:
                     result[str(key)] = value
         return result
 
@@ -224,13 +252,19 @@ def _batch_fingerprint(
     ``--to French``.
     """
     h = hashlib.sha1(usedforsecurity=False)
-    h.update(target_lang.encode("utf-8"))
-    if source_lang:
-        h.update(source_lang.encode("utf-8"))
-    if glossary and glossary.terms:
-        h.update(glossary.prompt_block().encode("utf-8"))
+
+    # NUL-separate every field: without it, ("Spanish", None) and ("Span", "ish") would hash
+    # to the same digest and a French resume could reuse Spanish text.
+    def field(value: str) -> None:
+        h.update(value.encode("utf-8"))
+        h.update(b"\0")
+
+    field(target_lang)
+    field(source_lang or "")
+    field(glossary.prompt_block() if glossary and glossary.terms else "")
     for uid, text in sorted(batch.items(), key=lambda x: x[0]):
-        h.update(f"{uid}:{text}".encode())
+        field(uid)
+        field(text)
     return h.hexdigest()
 
 

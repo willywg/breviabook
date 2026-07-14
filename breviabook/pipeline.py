@@ -31,7 +31,11 @@ from breviabook.render.epub_renderer import EpubRenderer
 from breviabook.render.md_renderer import MarkdownRenderer
 from breviabook.render.pdf_renderer import PdfRenderer
 from breviabook.translate.glossary import Glossary
-from breviabook.translate.translator import Translator, count_translatable_units
+from breviabook.translate.translator import (
+    DEFAULT_UNITS_PER_BATCH,
+    Translator,
+    count_translatable_units,
+)
 from breviabook.ui.progress import LogReporter, NullReporter, ProgressReporter
 from breviabook.utils.tokens import block_tokens
 
@@ -162,8 +166,7 @@ def estimate_condense(
 
     if translate_only:
         units = count_translatable_units(doc)
-        max_units_per_batch = 40
-        batches = math.ceil(units / max_units_per_batch) if units else 0
+        batches = math.ceil(units / DEFAULT_UNITS_PER_BATCH) if units else 0
         prompt_est = round(input_tokens + PROMPT_OVERHEAD_PER_BATCH * batches)
         completion_est = round(input_tokens * TRANSLATION_EXPANSION)
         tr_cost: float | None = None
@@ -184,14 +187,16 @@ def estimate_condense(
     chunks = Chunker(chunk_tokens).chunk(doc)
     n_chunks = len(chunks)
 
+    # Approximate token flow across passes: condense (reads full input), synthesis (reads the
+    # condensed text), and translation if requested; plus per-chunk prompt overhead.
     out = input_tokens * target_ratio
     translate = bool(translate_to)
     prompt_est = round(input_tokens + out + (out if translate else 0) + 250 * n_chunks)
     completion_est = round(out * (2 + (1 if translate else 0)))
 
-    translation_cost: float | None = None
+    cost: float | None = None
     if provider_name and model:
-        translation_cost = estimate_cost(provider_name.lower(), model, prompt_est, completion_est)
+        cost = estimate_cost(provider_name.lower(), model, prompt_est, completion_est)
 
     return Estimate(
         input_tokens=input_tokens,
@@ -200,7 +205,7 @@ def estimate_condense(
         chunks=n_chunks,
         estimated_prompt_tokens=prompt_est,
         estimated_completion_tokens=completion_est,
-        estimated_cost_usd=translation_cost,
+        estimated_cost_usd=cost,
     )
 
 
@@ -303,7 +308,6 @@ async def condense_book(
             for cc in condensed
             if cc.condense_failed
         )
-        batches_reused = reused_before if resume else 0
 
         n_chapters = len({cc.chapter_index for cc in condensed})
         reporter.phase("Synthesize", total=n_chapters)
@@ -345,6 +349,8 @@ async def condense_book(
         try:
             output_files.append(_render(fmt, final_doc, out_dir, stem))
         except RuntimeError as exc:
+            # e.g. PDF requested but weasyprint's system libs are missing: skip this format
+            # and keep the others rather than discarding the whole (already paid-for) run.
             warnings.append(f"{fmt}: skipped — {exc}")
         reporter.advance()
 
@@ -358,7 +364,7 @@ async def condense_book(
         chunks_reused=chunks_reused_val,
         usage=usage if isinstance(usage, Usage) else None,
         translate_only=translate_only,
-        batches_reused=batches_reused if translate_only else 0,
+        batches_reused=batches_reused,
     )
 
 
