@@ -1,14 +1,20 @@
-"""Integrated translation of the condensed IR (ROADMAP §7.5).
+"""Integrated translation of the IR (ROADMAP §7.5, §10).
 
-Runs after condensation/synthesis, on the much smaller condensed document. Only natural-
-language units are translated — chapter titles, headings, paragraphs, quotes, and list items;
-code, tables, and images are preserved. Identifiers/URLs/paths inside prose are kept by
-instruction. One LLM call per chapter (id→translation JSON); unanswered ids fall back to the
-original text. Uses the same provider as condensation, so usage/cost accrues automatically.
+Runs after condensation/synthesis (condense+translate) or directly on the parsed document
+(translate-only). Only natural-language units are translated — chapter titles, headings,
+paragraphs, quotes, and list items; code, tables, and images are preserved. Identifiers/URLs/
+paths inside prose are kept by instruction. Batches of ~40 units per LLM call; unanswered
+ids fall back to the original text. Uses the same provider as condensation, so usage/cost
+accrues automatically.
+
+When a :class:`~breviabook.persistence.checkpoint.CheckpointManager` is provided
+(translate-only mode), completed batches are persisted with a source-language+glossary hash
+so a resumed run reuses them instead of re-translating.
 """
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Callable
 
 from breviabook.ir.models import (
@@ -21,6 +27,7 @@ from breviabook.ir.models import (
     QuoteBlock,
 )
 from breviabook.llm.base import LLMProvider, Message
+from breviabook.persistence.checkpoint import CheckpointManager
 from breviabook.translate.glossary import Glossary
 from breviabook.utils.jsonx import extract_json_object
 
@@ -73,18 +80,18 @@ class Translator:
         glossary: Glossary | None = None,
         max_units_per_batch: int = 40,
         max_retries: int = 2,
+        checkpoint: CheckpointManager | None = None,
     ) -> None:
         self.provider = provider
         self.model = model
         self.target_lang = target_lang
         self.source_lang = source_lang
         self.glossary = glossary
-        # Translate a chapter in batches: one giant JSON per chapter is fragile (a single
-        # malformed string from the model fails the whole chapter). Smaller batches isolate
-        # failures, and a failed batch falls back to the source text instead of crashing.
         self.max_units_per_batch = max_units_per_batch
         self.max_retries = max_retries
-        self.untranslated_units = 0  # segments left in the source language after fallback
+        self.checkpoint = checkpoint
+        self.untranslated_units = 0
+        self.reused_batches = 0
 
     async def translate_document(
         self,
@@ -93,13 +100,13 @@ class Translator:
         on_progress: Callable[[Chapter], None] | None = None,
     ) -> Document:
         chapters: list[Chapter] = []
-        for ch in doc.chapters:
-            chapters.append(await self.translate_chapter(ch))
+        for idx, ch in enumerate(doc.chapters):
+            chapters.append(await self.translate_chapter(ch, chapter_index=idx))
             if on_progress is not None:
                 on_progress(chapters[-1])
         return Document(metadata=doc.metadata, images=doc.images, chapters=chapters)
 
-    async def translate_chapter(self, chapter: Chapter) -> Chapter:
+    async def translate_chapter(self, chapter: Chapter, *, chapter_index: int = 0) -> Chapter:
         units: dict[str, str] = {}
         counter = 0
 
@@ -123,7 +130,7 @@ class Translator:
         if not units:
             return chapter
 
-        translations = await self._translate_batched(units)
+        translations = await self._translate_batched(units, chapter_index)
         new_blocks: list[Block] = []
         for kind, block, ref in plan:
             if kind == "text" and isinstance(ref, str):
@@ -142,15 +149,33 @@ class Translator:
             new_title = translations.get(title_uid, chapter.title)
         return Chapter(title=new_title, blocks=new_blocks)
 
-    async def _translate_batched(self, units: dict[str, str]) -> dict[str, str]:
-        """Translate units in bounded batches; a batch that keeps failing is left untranslated."""
+    async def _translate_batched(
+        self, units: dict[str, str], chapter_index: int = 0
+    ) -> dict[str, str]:
         items = list(units.items())
         out: dict[str, str] = {}
         for start in range(0, len(items), self.max_units_per_batch):
             batch = dict(items[start : start + self.max_units_per_batch])
+            cp = self.checkpoint
+            key = f"tr:{chapter_index}:{start}"
+            source_hash = _batch_fingerprint(
+                batch, self.target_lang, self.source_lang, self.glossary
+            )
+            if cp is not None:
+                payload = cp.get(key)
+                if payload is not None and payload.get("source_hash") == source_hash:
+                    cached = payload.get("translations")
+                    if isinstance(cached, dict):
+                        out.update(
+                            {str(k): str(v) for k, v in cached.items() if isinstance(v, str)}
+                        )
+                        self.reused_batches += 1
+                        continue
             translated = await self._translate_batch_resilient(batch)
             out.update(translated)
             self.untranslated_units += len(batch) - len(translated)
+            if cp is not None and translated:
+                cp.record(key, {"source_hash": source_hash, "translations": translated})
         return out
 
     async def _translate_batch_resilient(self, batch: dict[str, str]) -> dict[str, str]:
@@ -184,3 +209,44 @@ class Translator:
     @staticmethod
     def _original_text(block: Block) -> str:
         return getattr(block, "text", "")
+
+
+def _batch_fingerprint(
+    batch: dict[str, str],
+    target_lang: str,
+    source_lang: str | None,
+    glossary: Glossary | None,
+) -> str:
+    """SHA-1 over target language, source language, glossary prompt, and batch content.
+
+    This guarantees that switching target language or editing the glossary invalidates
+    cached translations — a stale checkpoint from ``--to Spanish`` is never reused for
+    ``--to French``.
+    """
+    h = hashlib.sha1(usedforsecurity=False)
+    h.update(target_lang.encode("utf-8"))
+    if source_lang:
+        h.update(source_lang.encode("utf-8"))
+    if glossary and glossary.terms:
+        h.update(glossary.prompt_block().encode("utf-8"))
+    for uid, text in sorted(batch.items(), key=lambda x: x[0]):
+        h.update(f"{uid}:{text}".encode())
+    return h.hexdigest()
+
+
+def count_translatable_units(doc: Document) -> int:
+    """Count prose units that the :class:`Translator` would process.
+
+    Includes chapter titles, headings, paragraphs, quotes, and list items. Must stay
+    in sync with :meth:`Translator.translate_chapter` so dry-run estimates cannot drift.
+    """
+    total = 0
+    for chapter in doc.chapters:
+        if chapter.title:
+            total += 1
+        for block in chapter.blocks:
+            if isinstance(block, (HeadingBlock, ParagraphBlock, QuoteBlock)):
+                total += 1
+            elif isinstance(block, ListBlock):
+                total += len(block.items)
+    return total
