@@ -8,6 +8,7 @@ so this is unit-testable with the mock provider, and the PDF renderer is only to
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -30,7 +31,11 @@ from breviabook.render.epub_renderer import EpubRenderer
 from breviabook.render.md_renderer import MarkdownRenderer
 from breviabook.render.pdf_renderer import PdfRenderer
 from breviabook.translate.glossary import Glossary
-from breviabook.translate.translator import Translator
+from breviabook.translate.translator import (
+    DEFAULT_UNITS_PER_BATCH,
+    Translator,
+    count_translatable_units,
+)
 from breviabook.ui.progress import LogReporter, NullReporter, ProgressReporter
 from breviabook.utils.tokens import block_tokens
 
@@ -39,6 +44,12 @@ SUPPORTED_FORMATS = ("md", "epub", "pdf")
 # Rough page-count heuristic: a printed technical page holds ~1,800 chars ≈ ~450 tokens.
 # Used only for human-friendly "~N pages" reporting, never for any pipeline decision.
 TOKENS_PER_PAGE = 450
+
+# Translation-only cost model constants (PRP feat/translate-command).
+# TRANSLATION_EXPANSION: target-language expansion factor (EN→ES runs ~10–20% longer).
+# PROMPT_OVERHEAD_PER_BATCH: per-batch prompt boilerplate (~250 tokens).
+TRANSLATION_EXPANSION = 1.15
+PROMPT_OVERHEAD_PER_BATCH = 250
 
 Log = Callable[[str], None]
 
@@ -61,6 +72,8 @@ class CondenseResult:
     chunks_total: int = 0
     chunks_reused: int = 0
     usage: Usage | None = None
+    translate_only: bool = False
+    batches_reused: int = 0
 
 
 @dataclass
@@ -72,6 +85,8 @@ class Estimate:
     estimated_prompt_tokens: int = 0
     estimated_completion_tokens: int = 0
     estimated_cost_usd: float | None = None
+    translatable_units: int = 0
+    batches: int = 0
 
 
 def _check_supported(path: Path) -> str:
@@ -140,10 +155,35 @@ def estimate_condense(
     provider_name: str | None = None,
     model: str | None = None,
     translate_to: str | None = None,
+    translate_only: bool = False,
 ) -> Estimate:
-    """Parse and report token/chunk counts + approximate cost, with NO LLM call (``--dry-run``)."""
+    """Parse and report token/chunk counts + approximate cost, with NO LLM call (``--dry-run``).
+
+    When ``translate_only``, uses the translation cost model instead of the condensation one.
+    """
     doc = _parse_input_sync(input_path, manual_toc=manual_toc)
     input_tokens = count_document_tokens(doc)
+
+    if translate_only:
+        units = count_translatable_units(doc)
+        batches = math.ceil(units / DEFAULT_UNITS_PER_BATCH) if units else 0
+        prompt_est = round(input_tokens + PROMPT_OVERHEAD_PER_BATCH * batches)
+        completion_est = round(input_tokens * TRANSLATION_EXPANSION)
+        tr_cost: float | None = None
+        if provider_name and model:
+            tr_cost = estimate_cost(provider_name.lower(), model, prompt_est, completion_est)
+        return Estimate(
+            input_tokens=input_tokens,
+            estimated_output_tokens=completion_est,
+            chapters=len(doc.chapters),
+            chunks=0,
+            estimated_prompt_tokens=prompt_est,
+            estimated_completion_tokens=completion_est,
+            estimated_cost_usd=tr_cost,
+            translatable_units=units,
+            batches=batches,
+        )
+
     chunks = Chunker(chunk_tokens).chunk(doc)
     n_chunks = len(chunks)
 
@@ -188,74 +228,119 @@ async def condense_book(
     infer_pages: int = 20,
     log: Log = _noop,
     reporter: ProgressReporter | None = None,
+    translate_only: bool = False,
 ) -> CondenseResult:
-    """Run the full condensation pipeline and write the requested output formats."""
+    """Run the full condensation pipeline and write the requested output formats.
+
+    When ``translate_only=True``, skips chunk→condense→synthesize and feeds the parsed
+    ``Document`` directly to the :class:`Translator`, then runs ``ImageSelector`` and renders.
+    """
     if reporter is None:
         reporter = LogReporter(log) if log is not _noop else NullReporter()
     fmts = validate_formats(formats)
     out_dir.mkdir(parents=True, exist_ok=True)
-    stem = f"{input_path.stem}-condensed"
     warnings: list[str] = []
+    batches_reused = 0
+    chunks_total = 0
+    chunks_reused_val = 0
+    stem_condensed = f"{input_path.stem}-condensed"
 
     reporter.phase("Parse", total=1)
     doc = await _parse_input(
         input_path, manual_toc=manual_toc, provider=provider, model=model, infer_pages=infer_pages
     )
     input_tokens = count_document_tokens(doc)
-
-    chunks = Chunker(chunk_tokens).chunk(doc)
     reporter.advance()
-    reporter.note(f"{len(doc.chapters)} chapters · {len(chunks)} chunks · ~{input_tokens:,} tokens")
+    reporter.note(f"{len(doc.chapters)} chapters · ~{input_tokens:,} tokens")
 
-    checkpoint_path = checkpoint_path or (out_dir / ".breviabook" / f"{stem}.jsonl")
-    checkpoint = CheckpointManager(checkpoint_path)
-    if not resume:
-        checkpoint.clear()
-    reused_before = len(checkpoint.results())
+    if translate_only:
+        if not translate_to:
+            raise ValueError("translate_only requires translate_to")
+        stem = f"{input_path.stem}-{translate_to.lower().replace(' ', '-')}"
+        reporter.phase("Translate", total=len(doc.chapters))
 
-    reporter.phase("Condense", total=len(chunks))
-    condenser = Condenser(provider, model, target_ratio)
-    condensed = await condenser.condense(
-        chunks, checkpoint=checkpoint, on_progress=lambda _cc: reporter.advance()
-    )
-    warnings.extend(
-        f"chunk {cc.id}: condensed output longer than input"
-        for cc in condensed
-        if cc.output_longer_than_input
-    )
-    warnings.extend(
-        f"chunk {cc.id}: condense failed after retries; kept original text"
-        for cc in condensed
-        if cc.condense_failed
-    )
-
-    n_chapters = len({cc.chapter_index for cc in condensed})
-    reporter.phase("Synthesize", total=n_chapters)
-    chapters = await Synthesizer(provider, model, target_ratio).synthesize(
-        condensed, on_progress=lambda _ch: reporter.advance()
-    )
-    condensed_doc = synthesized_to_document(doc, chapters)
-
-    if translate_to:
-        reporter.phase("Translate", total=len(condensed_doc.chapters))
+        tr_checkpoint_path = checkpoint_path or (out_dir / ".breviabook" / f"{stem}.jsonl")
+        tr_checkpoint = CheckpointManager(tr_checkpoint_path)
+        if not resume:
+            tr_checkpoint.clear()
         translator = Translator(
-            provider, model, translate_to, source_lang=source_lang, glossary=glossary
+            provider,
+            model,
+            translate_to,
+            source_lang=source_lang,
+            glossary=glossary,
+            checkpoint=tr_checkpoint,
         )
-        condensed_doc = await translator.translate_document(
-            condensed_doc, on_progress=lambda _ch: reporter.advance()
+        working_doc = await translator.translate_document(
+            doc, on_progress=lambda _ch: reporter.advance()
+        )
+        batches_reused = translator.reused_batches
+        if translator.untranslated_units:
+            warnings.append(
+                f"{translator.untranslated_units} segments left untranslated "
+                "(model response unparseable after retries)"
+            )
+    else:
+        stem = stem_condensed
+        chunks = Chunker(chunk_tokens).chunk(doc)
+        chunks_total = len(chunks)
+        reporter.note(f"{chunks_total} chunks")
+
+        checkpoint_path = checkpoint_path or (out_dir / ".breviabook" / f"{stem}.jsonl")
+        checkpoint = CheckpointManager(checkpoint_path)
+        if not resume:
+            checkpoint.clear()
+        reused_before = len(checkpoint.results())
+        chunks_reused_val = reused_before
+
+        reporter.phase("Condense", total=chunks_total)
+        condenser = Condenser(provider, model, target_ratio)
+        condensed = await condenser.condense(
+            chunks, checkpoint=checkpoint, on_progress=lambda _cc: reporter.advance()
+        )
+        warnings.extend(
+            f"chunk {cc.id}: condensed output longer than input"
+            for cc in condensed
+            if cc.output_longer_than_input
+        )
+        warnings.extend(
+            f"chunk {cc.id}: condense failed after retries; kept original text"
+            for cc in condensed
+            if cc.condense_failed
         )
 
-    if rank_images and condensed_doc.images:
+        n_chapters = len({cc.chapter_index for cc in condensed})
+        reporter.phase("Synthesize", total=n_chapters)
+        chapters = await Synthesizer(provider, model, target_ratio).synthesize(
+            condensed, on_progress=lambda _ch: reporter.advance()
+        )
+        working_doc = synthesized_to_document(doc, chapters)
+
+        if translate_to:
+            reporter.phase("Translate", total=len(working_doc.chapters))
+            translator = Translator(
+                provider, model, translate_to, source_lang=source_lang, glossary=glossary
+            )
+            working_doc = await translator.translate_document(
+                working_doc, on_progress=lambda _ch: reporter.advance()
+            )
+            if translator.untranslated_units:
+                warnings.append(
+                    f"{translator.untranslated_units} segments left untranslated "
+                    "(model response unparseable after retries)"
+                )
+
+    if rank_images and working_doc.images:
         if not isinstance(provider, VisionProvider):
             raise ValueError(
                 "--rank-images needs a vision-capable provider/model (e.g. gemini); "
                 f"{getattr(provider, 'name', 'provider')!r} does not support images."
             )
         reporter.phase("Rank images", total=1)
-        condensed_doc = await VisionRanker(provider, model).rank(condensed_doc)
+        working_doc = await VisionRanker(provider, model).rank(working_doc)
         reporter.advance()
 
-    selected = ImageSelector().select(condensed_doc)
+    selected = ImageSelector().select(working_doc)
     final_doc = selected.document
 
     reporter.phase("Render", total=len(fmts))
@@ -275,9 +360,11 @@ async def condense_book(
         input_tokens=input_tokens,
         output_tokens=_document_tokens(final_doc),
         warnings=warnings,
-        chunks_total=len(chunks),
-        chunks_reused=reused_before if resume else 0,
+        chunks_total=chunks_total,
+        chunks_reused=chunks_reused_val,
         usage=usage if isinstance(usage, Usage) else None,
+        translate_only=translate_only,
+        batches_reused=batches_reused,
     )
 
 

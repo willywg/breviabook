@@ -245,3 +245,148 @@ async def test_pdf_render_failure_is_skipped_with_warning(
     )
     assert {p.name for p in result.output_files} == {"sample-condensed.md"}  # pdf skipped
     assert any("pdf: skipped" in w for w in result.warnings)
+
+
+# --------------------------------------------------------------------------- #
+# Translate-only pipeline tests (feat/translate-command)
+# --------------------------------------------------------------------------- #
+
+_TRANSLATE_REPLY = json.dumps({"translations": {str(i): f"ES{i}" for i in range(1, 60)}})
+
+
+class TranslateOnlyProvider:
+    name = "translate-only"
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def generate(self, messages: list[Message], model: str, **opts: object) -> str:
+        self.calls += 1
+        return _TRANSLATE_REPLY
+
+
+async def test_translate_only_no_condense_calls(tmp_path: Path) -> None:
+    provider = TranslateOnlyProvider()
+    result = await condense_book(
+        input_path=FIXTURE,
+        out_dir=tmp_path,
+        formats=["md"],
+        provider=provider,
+        model="m",
+        translate_only=True,
+        translate_to="Spanish",
+    )
+    assert result.translate_only
+    # The fixture has 2 short chapters; depending on exact token count, verify
+    # there are zero condense/synthesize phases (translate-only path was taken).
+    assert result.chunks_total == 0
+    assert result.chunks_reused == 0
+    assert result.output_files
+
+
+async def test_translate_only_requires_translate_to(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="translate_only requires translate_to"):
+        await condense_book(
+            input_path=FIXTURE,
+            out_dir=tmp_path,
+            formats=["md"],
+            provider=ScriptedProvider(_REPLY),
+            model="m",
+            translate_only=True,
+        )
+
+
+async def test_translate_only_preserves_code_and_images(tmp_path: Path) -> None:
+    await condense_book(
+        input_path=FIXTURE,
+        out_dir=tmp_path,
+        formats=["md"],
+        provider=TranslateOnlyProvider(),
+        model="m",
+        translate_only=True,
+        translate_to="Spanish",
+    )
+    text = (tmp_path / "sample-spanish.md").read_text(encoding="utf-8")
+    # Code blocks must be preserved (the fixture has a code block).
+    assert "```" in text
+
+
+async def test_translate_only_resume_skips_done_batches(tmp_path: Path) -> None:
+    cp_path = tmp_path / ".breviabook" / "sample-spanish.jsonl"
+    provider1 = TranslateOnlyProvider()
+    await condense_book(
+        input_path=FIXTURE,
+        out_dir=tmp_path,
+        formats=["md"],
+        provider=provider1,
+        model="m",
+        translate_only=True,
+        translate_to="Spanish",
+        resume=False,
+    )
+    first_calls = provider1.calls
+    assert first_calls > 0
+    assert cp_path.exists()
+
+    # Second run with --resume: no new LLM calls.
+    provider2 = TranslateOnlyProvider()
+    result2 = await condense_book(
+        input_path=FIXTURE,
+        out_dir=tmp_path,
+        formats=["md"],
+        provider=provider2,
+        model="m",
+        translate_only=True,
+        translate_to="Spanish",
+        resume=True,
+    )
+    assert provider2.calls == 0
+    assert result2.batches_reused == first_calls
+
+
+async def test_translate_only_image_selector_still_runs(tmp_path: Path) -> None:
+    # The fixture has an image. Even though nothing was condensed, ImageSelector
+    # must run to strip dangling ImageBlocks.
+    result = await condense_book(
+        input_path=FIXTURE,
+        out_dir=tmp_path,
+        formats=["md"],
+        provider=TranslateOnlyProvider(),
+        model="m",
+        translate_only=True,
+        translate_to="Spanish",
+    )
+    assert result.output_files
+
+
+async def test_translate_only_untranslated_warning(tmp_path: Path) -> None:
+    # A provider that fails to parse on the first batch triggers untranslated warning.
+    class FailingProvider:
+        name = "failing"
+
+        async def generate(self, messages: list[Message], model: str, **opts: object) -> str:
+            return "not json"
+
+    result = await condense_book(
+        input_path=FIXTURE,
+        out_dir=tmp_path,
+        formats=["md"],
+        provider=FailingProvider(),
+        model="m",
+        translate_only=True,
+        translate_to="Spanish",
+    )
+    assert any("untranslated" in w.lower() for w in result.warnings)
+
+
+def test_estimate_translate_only() -> None:
+    est = estimate_condense(FIXTURE, translate_only=True, translate_to="Spanish")
+    assert est.chunks == 0
+    assert est.translatable_units > 0
+    assert est.batches > 0
+    assert est.estimated_output_tokens > est.input_tokens  # expansion
+    assert "compression" not in str(est).lower()  # no compression term here
+    # Verify the expansion factor is applied.
+    expected_output = round(est.input_tokens * 1.15)
+    # Allow small rounding difference.
+    assert abs(est.estimated_output_tokens - expected_output) <= 50

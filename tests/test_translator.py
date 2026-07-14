@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -19,8 +20,15 @@ from breviabook.ir.models import (
     TableBlock,
 )
 from breviabook.llm.base import Message
+from breviabook.persistence.checkpoint import CheckpointManager
 from breviabook.translate.glossary import Glossary
-from breviabook.translate.translator import TranslateError, Translator, build_translate_messages
+from breviabook.translate.translator import (
+    TranslateError,
+    Translator,
+    _batch_fingerprint,
+    build_translate_messages,
+    count_translatable_units,
+)
 
 
 class ScriptedProvider:
@@ -160,3 +168,266 @@ async def test_translate_document_keeps_images_and_metadata() -> None:
     assert set(out.images) == {"i"}
     assert out.metadata.title == "T"
     assert out.chapters[0].blocks[0].text == "hello"  # type: ignore[union-attr]
+
+
+# --------------------------------------------------------------------------- #
+# Checkpoint tests (translate-only — feat/translate-command)
+# --------------------------------------------------------------------------- #
+
+
+class CountingProvider:
+    name = "counting"
+
+    def __init__(self, prefix: str = "ES") -> None:
+        self.prefix = prefix
+        self.calls = 0
+
+    async def generate(self, messages: list[Message], model: str, **opts: object) -> str:
+        self.calls += 1
+        content = messages[-1]["content"]
+        ids = []
+        for ln in content.splitlines():
+            stripped = ln.strip()
+            if stripped.startswith("[") and "]" in stripped:
+                ids.append(stripped[1 : stripped.index("]")])
+        return _translations({uid: f"{self.prefix}{uid}" for uid in ids})
+
+
+async def test_checkpoint_reuses_completed_batches(tmp_path: Path) -> None:
+    cp_path = tmp_path / "checkpoint.jsonl"
+    cp = CheckpointManager(cp_path)
+
+    # First run: translate 80 units (2 batches of 40).
+    chapter = Chapter(blocks=[ParagraphBlock(text=f"p{i}") for i in range(80)])
+    provider1 = CountingProvider("ES")
+    t1 = Translator(provider1, "m", "Spanish", max_units_per_batch=40, checkpoint=cp)
+    await t1.translate_chapter(chapter)
+    assert provider1.calls == 2
+    assert t1.reused_batches == 0
+
+    # Second run with same checkpoint: all batches reused.
+    cp2 = CheckpointManager(cp_path)  # reload
+    provider2 = CountingProvider("ES")
+    t2 = Translator(provider2, "m", "Spanish", max_units_per_batch=40, checkpoint=cp2)
+    result = await t2.translate_chapter(chapter)
+    assert provider2.calls == 0
+    assert t2.reused_batches == 2
+    assert result.blocks[0].text == "ES1"  # type: ignore[union-attr]
+
+
+async def test_checkpoint_invalidated_by_language_change(tmp_path: Path) -> None:
+    cp_path = tmp_path / "checkpoint.jsonl"
+    cp = CheckpointManager(cp_path)
+
+    chapter = Chapter(blocks=[ParagraphBlock(text="hello")])
+    t_es = Translator(CountingProvider("ES"), "m", "Spanish", checkpoint=cp)
+    await t_es.translate_chapter(chapter)
+
+    # Switch to French — cached Spanish batch must NOT be reused.
+    cp2 = CheckpointManager(cp_path)
+    provider_fr = CountingProvider("FR")
+    t_fr = Translator(provider_fr, "m", "French", checkpoint=cp2)
+    result = await t_fr.translate_chapter(chapter)
+    assert provider_fr.calls == 1
+    assert t_fr.reused_batches == 0
+    assert result.blocks[0].text == "FR1"  # type: ignore[union-attr]
+
+
+async def test_checkpoint_invalidated_by_glossary_change(tmp_path: Path) -> None:
+    cp_path = tmp_path / "checkpoint.jsonl"
+    cp = CheckpointManager(cp_path)
+
+    chapter = Chapter(blocks=[ParagraphBlock(text="thread")])
+    t1 = Translator(
+        CountingProvider("ES"),
+        "m",
+        "Spanish",
+        glossary=Glossary({"thread": "hilo"}),
+        checkpoint=cp,
+    )
+    await t1.translate_chapter(chapter)
+
+    # Same language, different glossary — must re-translate.
+    cp2 = CheckpointManager(cp_path)
+    provider2 = CountingProvider("ES2")
+    t2 = Translator(
+        provider2,
+        "m",
+        "Spanish",
+        glossary=Glossary({"thread": "hebra"}),
+        checkpoint=cp2,
+    )
+    await t2.translate_chapter(chapter)
+    assert provider2.calls == 1
+    assert t2.reused_batches == 0
+
+
+async def test_failed_batch_not_checkpointed(tmp_path: Path) -> None:
+    cp_path = tmp_path / "checkpoint.jsonl"
+    cp = CheckpointManager(cp_path)
+
+    # A provider that always fails to parse.
+    provider = ScriptedProvider("not json")
+    t1 = Translator(provider, "m", "Spanish", max_retries=1, checkpoint=cp)
+    await t1.translate_chapter(Chapter(blocks=[ParagraphBlock(text="hello")]))
+    assert t1.untranslated_units == 1
+
+    # The checkpoint must be empty — failures are never cached.
+    assert len(cp.results()) == 0
+
+
+class PartialProvider:
+    """Answers with valid JSON that is missing the last segment of every batch."""
+
+    name = "partial"
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def generate(self, messages: list[Message], model: str, **opts: object) -> str:
+        self.calls += 1
+        prompt = messages[-1]["content"]
+        uids = [line[1 : line.index("]")] for line in prompt.splitlines() if line.startswith("[")]
+        return _translations({uid: f"ES-{uid}" for uid in uids[:-1]})  # drops the last one
+
+
+async def test_partial_batch_not_checkpointed(tmp_path: Path) -> None:
+    """A batch answered only in part must not be cached: the gaps must stay retryable.
+
+    Caching it would freeze the missing segments in the source language forever (no --resume
+    would retry them) and zero out ``untranslated_units`` on the resumed run, so a run with
+    untranslated text would report a clean success.
+    """
+    cp_path = tmp_path / "checkpoint.jsonl"
+    chapter = Chapter(blocks=[ParagraphBlock(text=f"p{i}") for i in (1, 2, 3)])
+
+    provider = PartialProvider()
+    t1 = Translator(provider, "m", "Spanish", checkpoint=CheckpointManager(cp_path))
+    out1 = await t1.translate_chapter(chapter)
+
+    assert t1.untranslated_units == 1
+    assert [b.text for b in out1.blocks] == ["ES-1", "ES-2", "p3"]  # 3rd fell back to source
+    assert len(CheckpointManager(cp_path).results()) == 0  # nothing cached
+
+    # Resume with a provider that answers fully: the batch is retried, not served from cache.
+    good = CountingProvider("ES")
+    t2 = Translator(good, "m", "Spanish", checkpoint=CheckpointManager(cp_path))
+    out2 = await t2.translate_chapter(chapter)
+
+    assert good.calls == 1  # re-translated, not reused
+    assert t2.reused_batches == 0
+    assert t2.untranslated_units == 0
+    assert all(b.text.startswith("ES") for b in out2.blocks)  # nothing left in the source language
+
+
+async def test_response_ids_outside_the_batch_are_ignored() -> None:
+    """Only the ids we asked for are accepted; a stray id must not overwrite another unit."""
+    chapter = Chapter(blocks=[ParagraphBlock(text="p1"), ParagraphBlock(text="p2")])
+    # The model answers our two ids plus "7", which belongs to no unit in this chapter.
+    provider = ScriptedProvider(_translations({"1": "uno", "2": "dos", "7": "basura"}))
+    t = Translator(provider, "m", "Spanish", checkpoint=None)
+
+    out = await t.translate_chapter(chapter)
+
+    assert [b.text for b in out.blocks] == ["uno", "dos"]
+    assert t.untranslated_units == 0  # "7" must not be counted as a translated unit either
+
+
+async def test_incomplete_checkpoint_record_is_ignored(tmp_path: Path) -> None:
+    """A record that matches the fingerprint but misses units is a miss, not a partial hit."""
+    cp_path = tmp_path / "checkpoint.jsonl"
+    chapter = Chapter(blocks=[ParagraphBlock(text=f"p{i}") for i in (1, 2)])
+    units = {"1": "p1", "2": "p2"}
+
+    # Hand-craft a truncated record (e.g. from a torn write) covering only unit "1".
+    cp = CheckpointManager(cp_path)
+    cp.record(
+        "tr:0:0",
+        {
+            "source_hash": _batch_fingerprint(units, "Spanish", None, None),
+            "translations": {"1": "uno"},
+        },
+    )
+
+    provider = CountingProvider("ES")
+    t = Translator(provider, "m", "Spanish", checkpoint=CheckpointManager(cp_path))
+    out = await t.translate_chapter(chapter)
+
+    assert provider.calls == 1  # re-translated rather than partially reused
+    assert t.reused_batches == 0
+    assert [b.text for b in out.blocks] == ["ES1", "ES2"]
+
+
+async def test_checkpoint_resume_produces_identical_output(tmp_path: Path) -> None:
+    cp_path = tmp_path / "checkpoint.jsonl"
+    chapter = Chapter(blocks=[ParagraphBlock(text=f"p{i}") for i in range(100)])
+
+    # Full uninterrupted run.
+    cp1 = CheckpointManager(cp_path)
+    p1 = CountingProvider("ES")
+    t1 = Translator(p1, "m", "Spanish", max_units_per_batch=40, checkpoint=cp1)
+    out1 = await t1.translate_chapter(chapter)
+
+    # Simulate resume: prime checkpoint with first half of batches completed.
+    cp2_path = tmp_path / "checkpoint2.jsonl"
+    cp2 = CheckpointManager(cp2_path)
+    # Do half the batches via a fresh translator, then resume.
+    p2 = CountingProvider("ES")
+    t2 = Translator(p2, "m", "Spanish", max_units_per_batch=40, checkpoint=cp2)
+    await t2.translate_chapter(chapter)
+    first_half_calls = p2.calls
+
+    # Resume: reload checkpoint, use a provider that returns identically.
+    cp3 = CheckpointManager(cp2_path)
+    p3 = CountingProvider("ES")
+    t3 = Translator(p3, "m", "Spanish", max_units_per_batch=40, checkpoint=cp3)
+    out3 = await t3.translate_chapter(chapter)
+    # On resume, only the not-yet-cached batches are called.
+    assert p3.calls == 0  # all were cached from the first pass
+    assert t3.reused_batches == first_half_calls
+
+    # Output must be identical to the full run.
+    assert out3.title == out1.title
+    for a, b in zip(out3.blocks, out1.blocks, strict=True):
+        assert a == b
+
+
+def test_batch_fingerprint_includes_language() -> None:
+    batch = {"1": "hello", "2": "world"}
+    h1 = _batch_fingerprint(batch, "Spanish", "English", None)
+    h2 = _batch_fingerprint(batch, "French", "English", None)
+    assert h1 != h2
+
+
+def test_batch_fingerprint_includes_glossary() -> None:
+    batch = {"1": "thread"}
+    h1 = _batch_fingerprint(batch, "Spanish", None, Glossary({"thread": "hilo"}))
+    h2 = _batch_fingerprint(batch, "Spanish", None, Glossary({"thread": "hebra"}))
+    assert h1 != h2
+
+
+def test_count_translatable_units() -> None:
+    doc = Document(
+        metadata=DocumentMetadata(title="T", source_format="epub"),
+        chapters=[
+            Chapter(
+                title="Ch1",
+                blocks=[
+                    ParagraphBlock(text="p1"),
+                    CodeBlock(text="code"),
+                    ListBlock(items=["a", "b", "c"]),
+                    ImageBlock(image_id="i"),
+                ],
+            ),
+            Chapter(
+                title=None,
+                blocks=[
+                    HeadingBlock(level=2, text="H2"),
+                    ParagraphBlock(text="p2"),
+                ],
+            ),
+        ],
+    )
+    # Ch1: title(1) + paragraph(1) + list items(3) = 5
+    # Ch2: no title + heading(1) + paragraph(1) = 2
+    assert count_translatable_units(doc) == 7

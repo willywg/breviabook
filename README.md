@@ -114,6 +114,24 @@ uv run breviabook condense book.pdf --provider gemini --model gemini-3-flash-pre
   --rank-images --resume --out ./out/
 ```
 
+### Translate without condensing
+
+The `translate` command translates the **full** book — every chapter, every paragraph — without
+shortening it. It produces a same-length output in the target language, preserving code, tables,
+and images. It is the mode with the most LLM calls, which is why it supports `--resume` with its
+own translation checkpoint:
+
+```bash
+# Translate the full book to Spanish (no condensation)
+uv run breviabook translate book.epub --to Spanish --formats epub,md --out ./out/
+
+# Dry-run estimate first
+uv run breviabook translate book.epub --to Spanish --dry-run
+
+# Resume an interrupted translation
+uv run breviabook translate book.epub --to Spanish --resume --formats epub,md --out ./out/
+```
+
 ## CLI
 
 ```
@@ -134,6 +152,22 @@ breviabook condense INPUT.{epub,pdf} [options]
   --out             output directory                              (default: ./output)
   --resume          resume from checkpoint
   --dry-run         estimate tokens/cost/pages only, no LLM call
+
+breviabook translate INPUT.{epub,pdf} --to TARGET_LANG [options]
+
+  --to              target language (required)
+  --from            source language (optional hint)
+  --glossary        glossary JSON {source_term: target_term}
+  --formats         comma list of epub,pdf,md                     (default: epub,pdf,md)
+  --out             output directory                              (default: ./output)
+  --resume          resume from translation checkpoint
+  --provider        ollama | openai | gemini | openrouter        (default: ollama)
+  --model           model tag (default from .env)
+  --api-endpoint    base URL for OpenAI-compatible endpoints
+  --reasoning-effort  auto | disable | low | medium | high
+  --rank-images     use a vision model to score/drop images
+  --manual-toc      manual TOC JSON for PDFs without an outline
+  --dry-run         estimate tokens/cost only, no LLM call
 ```
 
 ## Cost & reasoning models
