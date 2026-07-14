@@ -41,11 +41,12 @@ env/
 htmlcov/
 .tox/
 
-# --- Editors / OS ---
+# --- Editors / OS / agent tooling ---
 .vscode/
 .idea/
 *.swp
 .DS_Store
+.commandcode/
 
 # --- Test artifacts (keep fixtures, ignore generated) ---
 tests/output/
