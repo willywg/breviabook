@@ -20,15 +20,23 @@ from pydantic import BaseModel, Field
 # --------------------------------------------------------------------------- #
 
 
+# Text-bearing blocks carry an optional ``rich`` field: sanitized inline HTML (emphasis, links,
+# color) produced by the parser. ``text`` is always the plain-text projection and drives token
+# budgeting/condensation unchanged; renderers and the translator prefer ``rich`` when present.
+# Invariant when set: ``text == htmlsan.strip_tags(rich)``.
+
+
 class HeadingBlock(BaseModel):
     type: Literal["heading"] = "heading"
     level: int = Field(ge=1, le=6)
     text: str
+    rich: str | None = None
 
 
 class ParagraphBlock(BaseModel):
     type: Literal["paragraph"] = "paragraph"
     text: str
+    rich: str | None = None
 
 
 class CodeBlock(BaseModel):
@@ -55,12 +63,15 @@ class TableBlock(BaseModel):
 class QuoteBlock(BaseModel):
     type: Literal["quote"] = "quote"
     text: str
+    rich: str | None = None
 
 
 class ListBlock(BaseModel):
     type: Literal["list"] = "list"
     items: list[str]
     ordered: bool = False
+    # Per-item sanitized inline HTML, aligned 1:1 with ``items``; None when no item has markup.
+    items_rich: list[str] | None = None
 
 
 Block = Annotated[

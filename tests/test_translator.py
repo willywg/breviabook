@@ -431,3 +431,78 @@ def test_count_translatable_units() -> None:
     # Ch1: title(1) + paragraph(1) + list items(3) = 5
     # Ch2: no title + heading(1) + paragraph(1) = 2
     assert count_translatable_units(doc) == 7
+
+
+class TagEchoProvider:
+    """Translates visible text (uppercase) but keeps inline tags exactly."""
+
+    name = "tag-echo"
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def generate(self, messages: list[Message], model: str, **opts: object) -> str:
+        import re
+
+        self.calls += 1
+        out: dict[str, str] = {}
+        for ln in messages[-1]["content"].splitlines():
+            m = re.match(r"\[(\d+)\]\s(.*)", ln)
+            if not m:
+                continue
+            uid, seg = m.group(1), m.group(2)
+            seg = re.sub(r">([^<]+)<", lambda x: ">" + x.group(1).upper() + "<", seg)
+            seg = re.sub(r"^([^<>]+)", lambda x: x.group(1).upper(), seg)
+            out[uid] = seg
+        return _translations(out)
+
+
+class TagManglingProvider:
+    """Returns translated text but drops the tags entirely (a hostile/garbled reply)."""
+
+    name = "tag-mangle"
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def generate(self, messages: list[Message], model: str, **opts: object) -> str:
+        import re
+
+        self.calls += 1
+        out: dict[str, str] = {}
+        for ln in messages[-1]["content"].splitlines():
+            m = re.match(r"\[(\d+)\]\s(.*)", ln)
+            if m:
+                out[m.group(1)] = re.sub(r"<[^>]+>", "", m.group(2)).upper()  # strip all tags
+        return _translations(out)
+
+
+async def test_rich_tags_preserved_through_translation() -> None:
+    rich = '<span style="color:#9e0b0f"><strong>Guiding</strong></span>'
+    chapter = Chapter(blocks=[HeadingBlock(level=2, text="Guiding", rich=rich)])
+    t = Translator(TagEchoProvider(), "m", "Spanish")
+    out = await t.translate_chapter(chapter)
+    block = out.blocks[0]
+    assert block.text == "GUIDING"  # visible text translated
+    assert block.rich == '<span style="color:#9e0b0f"><strong>GUIDING</strong></span>'
+    assert t.rich_downgraded == 0
+
+
+async def test_mangled_tags_downgrade_to_translated_plain() -> None:
+    rich = '<a href="https://x.com">link</a> and <em>really</em>'
+    chapter = Chapter(blocks=[ParagraphBlock(text="link and really", rich=rich)])
+    t = Translator(TagManglingProvider(), "m", "Spanish")
+    out = await t.translate_chapter(chapter)
+    block = out.blocks[0]
+    assert block.rich is None  # styling dropped rather than misattributed
+    assert block.text == "LINK AND REALLY"  # but the translated text is kept, not the English
+    assert t.rich_downgraded == 1
+
+
+async def test_plain_blocks_unaffected_by_rich_path() -> None:
+    chapter = Chapter(blocks=[ParagraphBlock(text="hello")])
+    t = Translator(CountingProvider("ES"), "m", "Spanish")
+    out = await t.translate_chapter(chapter)
+    assert out.blocks[0].text == "ES1"
+    assert out.blocks[0].rich is None
+    assert t.rich_downgraded == 0

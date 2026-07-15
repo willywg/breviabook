@@ -114,3 +114,35 @@ def test_ordered_list_and_table_escaping(tmp_path: Path) -> None:
     text = MarkdownRenderer().render(doc, tmp_path).read_text(encoding="utf-8")
     assert "1. a" in text and "2. b" in text
     assert r"a\|b" in text
+
+
+def test_rich_converted_to_markdown_and_html_passthrough(tmp_path: Path) -> None:
+    from breviabook.ir.models import HeadingBlock, ParagraphBlock
+    from breviabook.render.md_renderer import MarkdownRenderer
+
+    doc = Document(
+        metadata=DocumentMetadata(title="T", source_format="epub"),
+        chapters=[
+            Chapter(
+                blocks=[
+                    HeadingBlock(
+                        level=2,
+                        text="CHAPTER 1 Don't think",
+                        rich='<span style="color:#9e0b0f">CHAPTER 1</span> <strong>Don\'t</strong>',
+                    ),
+                    ParagraphBlock(
+                        text="a link and really",
+                        rich='<a href="https://x.com">a link</a> and <em>really</em>',
+                    ),
+                    ParagraphBlock(text="plain only"),
+                ]
+            )
+        ],
+    )
+    out = MarkdownRenderer().render(doc, tmp_path, stem="m")
+    md = out.read_text(encoding="utf-8")
+    assert "**Don't**" in md  # strong -> markdown
+    assert "*really*" in md  # em -> markdown
+    assert "[a link](https://x.com)" in md  # link -> markdown
+    assert '<span style="color:#9e0b0f">CHAPTER 1</span>' in md  # color span passes through
+    assert "plain only" in md

@@ -12,10 +12,11 @@ to guard against zip-slip (ROADMAP §12).
 
 from __future__ import annotations
 
+import warnings
 import zipfile
 from pathlib import Path
 
-from bs4 import BeautifulSoup, Tag
+from bs4 import BeautifulSoup, Tag, XMLParsedAsHTMLWarning
 from lxml import etree
 
 from breviabook.ir.models import (
@@ -33,7 +34,17 @@ from breviabook.ir.models import (
     TableBlock,
 )
 from breviabook.parsers.base import ParseError
+from breviabook.utils.htmlsan import (
+    ClassStyles,
+    contains_markup,
+    parse_class_styles,
+    sanitize_inline,
+    strip_tags,
+)
 from breviabook.utils.security import resolve_archive_href
+
+# EPUB content is XHTML; parsing it with the lxml *HTML* parser is intentional and reliable here.
+warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 
 _CONTAINER = "META-INF/container.xml"
 _HEADINGS = {"h1": 1, "h2": 2, "h3": 3, "h4": 4, "h5": 5, "h6": 6}
@@ -54,6 +65,7 @@ class EpubParser:
             opf_path = self._find_opf(zf)
             opf_xml = zf.read(opf_path)
             metadata, manifest, spine = self._parse_opf(opf_xml)
+            class_styles = self._load_class_styles(manifest, opf_path, zf)
 
             images: dict[str, ImageAsset] = {}
             chapters: list[Chapter] = []
@@ -66,7 +78,9 @@ class EpubParser:
                     raw = zf.read(href)
                 except KeyError:
                     continue
-                chapters.append(self._parse_chapter(raw, href, opf_path, manifest, zf, images))
+                chapters.append(
+                    self._parse_chapter(raw, href, opf_path, manifest, zf, images, class_styles)
+                )
 
         return Document(metadata=metadata, images=images, chapters=chapters)
 
@@ -111,6 +125,22 @@ class EpubParser:
         meta = DocumentMetadata(title=title, author=author, language=language, source_format="epub")
         return meta, manifest, spine
 
+    def _load_class_styles(
+        self, manifest: dict[str, tuple[str, str]], opf_path: str, zf: zipfile.ZipFile
+    ) -> ClassStyles:
+        """Read every CSS resource once and merge its class → style rules (for color etc.)."""
+        merged: ClassStyles = {}
+        for item_href, mtype in manifest.values():
+            if "css" not in mtype.lower():
+                continue
+            try:
+                css = zf.read(resolve_archive_href(opf_path, item_href)).decode("utf-8", "ignore")
+            except (KeyError, ValueError):
+                continue
+            for cls, rules in parse_class_styles(css).items():
+                merged.setdefault(cls, {}).update(rules)
+        return merged
+
     # -- chapter / XHTML ----------------------------------------------------- #
 
     def _parse_chapter(
@@ -121,11 +151,12 @@ class EpubParser:
         manifest: dict[str, tuple[str, str]],
         zf: zipfile.ZipFile,
         images: dict[str, ImageAsset],
+        class_styles: ClassStyles,
     ) -> Chapter:
         soup = BeautifulSoup(raw, "lxml")
         body = soup.body or soup
         blocks: list[Block] = []
-        self._walk(body, href, opf_path, manifest, zf, images, blocks)
+        self._walk(body, href, opf_path, manifest, zf, images, blocks, class_styles)
 
         title: str | None = None
         for block in blocks:
@@ -145,15 +176,16 @@ class EpubParser:
         zf: zipfile.ZipFile,
         images: dict[str, ImageAsset],
         out: list[Block],
+        class_styles: ClassStyles,
     ) -> None:
         for child in node.children:
             if not isinstance(child, Tag):
                 continue
             tag = child.name.lower()
             if tag in _HEADINGS:
-                text = child.get_text(" ", strip=True)
+                text, rich = _rich_text(child, class_styles)
                 if text:
-                    out.append(HeadingBlock(level=_HEADINGS[tag], text=text))
+                    out.append(HeadingBlock(level=_HEADINGS[tag], text=text, rich=rich))
             elif tag == "pre":
                 out.append(self._code_block(child))
             elif tag == "figure":
@@ -161,26 +193,29 @@ class EpubParser:
             elif tag == "img":
                 self._add_image(child, href, opf_path, manifest, zf, images, out)
             elif tag == "blockquote":
-                text = child.get_text(" ", strip=True)
+                text, rich = _rich_text(child, class_styles)
                 if text:
-                    out.append(QuoteBlock(text=text))
+                    out.append(QuoteBlock(text=text, rich=rich))
             elif tag in ("ul", "ol"):
                 lis = child.find_all("li", recursive=False)
-                items = [t for li in lis if (t := li.get_text(" ", strip=True))]
-                if items:
-                    out.append(ListBlock(items=items, ordered=tag == "ol"))
+                pairs = [rt for li in lis if (rt := _rich_text(li, class_styles))[0]]
+                if pairs:
+                    items = [t for t, _ in pairs]
+                    riches = [r or t for t, r in pairs]
+                    items_rich = riches if any(r for _, r in pairs) else None
+                    out.append(ListBlock(items=items, ordered=tag == "ol", items_rich=items_rich))
             elif tag == "table":
                 out.append(self._table_block(child))
             elif tag == "p":
                 imgs = child.find_all("img")
-                text = child.get_text(" ", strip=True)
+                text, rich = _rich_text(child, class_styles)
                 if imgs and not text:
                     self._emit_images(child, href, opf_path, manifest, zf, images, out)
                 elif text:
-                    out.append(ParagraphBlock(text=text))
+                    out.append(ParagraphBlock(text=text, rich=rich))
             else:
                 # Structural wrapper (div/section/body/...): recurse for nested blocks.
-                self._walk(child, href, opf_path, manifest, zf, images, out)
+                self._walk(child, href, opf_path, manifest, zf, images, out, class_styles)
 
     def _code_block(self, pre: Tag) -> CodeBlock:
         code_el = pre.find("code")
@@ -270,6 +305,19 @@ class EpubParser:
             alt_text=alt,
         )
         return image_id
+
+
+def _rich_text(el: Tag, class_styles: ClassStyles) -> tuple[str, str | None]:
+    """Return ``(plain_text, rich_or_None)`` for an inline-bearing element.
+
+    ``rich`` is sanitized inline HTML kept only when the element actually carries markup; then
+    ``text`` is its plain projection so the invariant ``text == strip_tags(rich)`` holds. A plain
+    element keeps the original ``get_text`` behaviour and ``rich=None``.
+    """
+    rich = sanitize_inline(el, class_styles)
+    if contains_markup(rich):
+        return strip_tags(rich), rich
+    return el.get_text(" ", strip=True), None
 
 
 def _is_xhtml(media_type: str) -> bool:

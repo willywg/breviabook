@@ -28,23 +28,32 @@ def esc(text: str) -> str:
     return html.escape(text, quote=True)
 
 
+def _inline(text: str, rich: str | None) -> str:
+    """Emit sanitized inline HTML (already safe) when present, else the escaped plain text."""
+    return rich if rich is not None else esc(text)
+
+
 def block_to_html(block: Block, image_src: ImageSrc) -> str:
     """Render one IR block to an HTML/XHTML string.
 
     ``image_src`` maps an ``image_id`` to the value for ``<img src>`` (or ``None`` to skip).
     """
     if isinstance(block, HeadingBlock):
-        return f"<h{block.level}>{esc(block.text)}</h{block.level}>"
+        return f"<h{block.level}>{_inline(block.text, block.rich)}</h{block.level}>"
     if isinstance(block, ParagraphBlock):
-        return f"<p>{esc(block.text)}</p>"
+        return f"<p>{_inline(block.text, block.rich)}</p>"
     if isinstance(block, CodeBlock):
         cls = f' class="language-{esc(block.language)}"' if block.language else ""
         return f"<pre><code{cls}>{esc(block.text)}</code></pre>"
     if isinstance(block, QuoteBlock):
-        return f"<blockquote>{esc(block.text)}</blockquote>"
+        return f"<blockquote>{_inline(block.text, block.rich)}</blockquote>"
     if isinstance(block, ListBlock):
         tag = "ol" if block.ordered else "ul"
-        items = "".join(f"<li>{esc(item)}</li>" for item in block.items)
+        riches = block.items_rich if block.items_rich is not None else [None] * len(block.items)
+        items = "".join(
+            f"<li>{_inline(item, rich)}</li>"
+            for item, rich in zip(block.items, riches, strict=True)
+        )
         return f"<{tag}>{items}</{tag}>"
     if isinstance(block, TableBlock):
         rows = []
