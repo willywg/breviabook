@@ -21,6 +21,7 @@ from __future__ import annotations
 import html
 import re
 from collections import Counter
+from collections.abc import Callable
 
 from bs4 import BeautifulSoup, Tag
 from bs4.element import NavigableString, PageElement
@@ -28,6 +29,9 @@ from bs4.element import NavigableString, PageElement
 # Effective styles a node can contribute. ``ClassStyles`` maps a CSS class name to a subset of
 # {"italic","bold","strike","color"} extracted from the stylesheet.
 ClassStyles = dict[str, dict[str, str]]
+# Given an inline ``<img>`` tag, register its asset and return the ``image_id`` (or None to drop).
+# Supplied by the parser; at translation time no resolver is used and existing ids are kept.
+ImgResolver = Callable[[Tag], "str | None"]
 
 _ITALIC_TAGS = {"i", "em"}
 _BOLD_TAGS = {"b", "strong"}
@@ -154,7 +158,24 @@ def _wrap(inner: str, node: Tag, class_styles: ClassStyles) -> str:
     return inner
 
 
-def _render_child(node: PageElement, class_styles: ClassStyles) -> str:
+def _render_img(node: Tag, img_resolver: ImgResolver | None) -> str:
+    """Emit ``<img data-image-id="ID"/>`` for an inline image, or drop it if unresolvable.
+
+    At parse time ``img_resolver`` registers the asset (from ``src``) and returns its id. At
+    translation time there is no resolver, so an already-normalized ``data-image-id`` is kept.
+    """
+    iid: str | None = None
+    if img_resolver is not None:
+        iid = img_resolver(node)
+    else:
+        existing = node.get("data-image-id")
+        iid = existing if isinstance(existing, str) and existing else None
+    return f'<img data-image-id="{esc(iid)}"/>' if iid else ""
+
+
+def _render_child(
+    node: PageElement, class_styles: ClassStyles, img_resolver: ImgResolver | None
+) -> str:
     if isinstance(node, NavigableString):
         return esc(_WS_RE.sub(" ", str(node)))
     if isinstance(node, Tag):
@@ -163,17 +184,23 @@ def _render_child(node: PageElement, class_styles: ClassStyles) -> str:
             return ""
         if name == "br":
             return " "
-        inner = "".join(_render_child(c, class_styles) for c in node.children)
+        if name == "img":
+            return _render_img(node, img_resolver)
+        inner = "".join(_render_child(c, class_styles, img_resolver) for c in node.children)
         return _wrap(inner, node, class_styles)
     return ""
 
 
-def sanitize_inline(source: Tag | str, class_styles: ClassStyles | None = None) -> str:
+def sanitize_inline(
+    source: Tag | str,
+    class_styles: ClassStyles | None = None,
+    img_resolver: ImgResolver | None = None,
+) -> str:
     """Return normalized, sanitized inline HTML for ``source`` (a BS4 element or a raw string)."""
     cs = class_styles or {}
     if isinstance(source, str):
         source = BeautifulSoup(source, "html.parser")
-    inner = "".join(_render_child(c, cs) for c in source.children)
+    inner = "".join(_render_child(c, cs, img_resolver) for c in source.children)
     return _WS_RE.sub(" ", inner).strip()
 
 
@@ -198,6 +225,19 @@ def inline_tag_signature(rich: str) -> Counter[str]:
             sig[f"a:{tag.get('href', '')}"] += 1
         elif name == "span":
             sig[f"span:{tag.get('style', '')}"] += 1
+        elif name == "img":
+            sig[f"img:{tag.get('data-image-id', '')}"] += 1
         else:
             sig[name] += 1
     return sig
+
+
+def inline_image_ids(rich: str) -> list[str]:
+    """Return the ``image_id``s referenced by inline ``<img>`` tags in a rich string."""
+    soup = BeautifulSoup(rich, "html.parser")
+    ids: list[str] = []
+    for tag in soup.find_all("img"):
+        iid = tag.get("data-image-id")
+        if isinstance(iid, str) and iid:
+            ids.append(iid)
+    return ids

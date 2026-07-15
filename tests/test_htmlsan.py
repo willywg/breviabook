@@ -72,3 +72,20 @@ def test_signature_detects_tag_changes() -> None:
 def test_plain_text_stays_plain() -> None:
     assert sanitize_inline("no markup here") == "no markup here"
     assert not contains_markup(sanitize_inline("no markup here"))
+
+
+def test_inline_image_resolved_and_signature() -> None:
+    from breviabook.utils.htmlsan import inline_image_ids
+
+    # With a resolver: <img src> becomes <img data-image-id>.
+    def resolver(tag) -> str:
+        return "img42"
+
+    out = sanitize_inline('Omit <img src="x.png"/> words', img_resolver=resolver)
+    assert out == 'Omit <img data-image-id="img42"/> words'
+    assert inline_image_ids(out) == ["img42"]
+    assert inline_tag_signature(out)["img:img42"] == 1
+
+    # Without a resolver (translation-time): an existing data-image-id is kept, bare src dropped.
+    assert sanitize_inline('a <img data-image-id="k"/> b') == 'a <img data-image-id="k"/> b'
+    assert sanitize_inline('a <img src="x.png"/> b') == "a b"

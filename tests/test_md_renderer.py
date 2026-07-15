@@ -146,3 +146,31 @@ def test_rich_converted_to_markdown_and_html_passthrough(tmp_path: Path) -> None
     assert "[a link](https://x.com)" in md  # link -> markdown
     assert '<span style="color:#9e0b0f">CHAPTER 1</span>' in md  # color span passes through
     assert "plain only" in md
+
+
+def test_inline_image_rendered_in_md_and_html(tmp_path: Path) -> None:
+    from breviabook.ir.models import HeadingBlock
+    from breviabook.render.html import block_to_html
+    from breviabook.render.md_renderer import MarkdownRenderer
+
+    doc = Document(
+        metadata=DocumentMetadata(title="T", source_format="epub"),
+        images={"strike": ImageAsset(image_id="strike", data=b"\x89PNG", mime="image/png")},
+        chapters=[
+            Chapter(
+                blocks=[
+                    HeadingBlock(
+                        level=2, text="Omit words", rich='Omit <img data-image-id="strike"/> words'
+                    )
+                ]
+            )
+        ],
+    )
+    out = MarkdownRenderer().render(doc, tmp_path, stem="m")
+    md = out.read_text(encoding="utf-8")
+    assert "![](images/" in md  # inline image resolved to a markdown image link
+
+    html = block_to_html(
+        doc.chapters[0].blocks[0], lambda i: "images/s.png" if i == "strike" else None
+    )
+    assert '<img src="images/s.png" alt=""/>' in html  # data-image-id resolved to real src

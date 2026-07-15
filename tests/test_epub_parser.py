@@ -142,3 +142,58 @@ def test_inline_formatting_extracted_to_rich(tmp_path) -> None:
 
     plain = next(b for b in paras if b.text == "Totally plain paragraph.")
     assert plain.rich is None  # no markup → stays simple
+
+
+def _epub_with_inline_image(path: Path) -> None:
+    import zipfile
+
+    png = (
+        b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+        b"\x08\x00\x00\x00\x00:~\x9bU\x00\x00\x00\nIDATx\x9cc\xf8\x0f\x00\x01"
+        b"\x01\x01\x00\x18\xdd\x8d\xb0\x00\x00\x00\x00IEND\xaeB`\x82"
+    )
+    container = (
+        '<?xml version="1.0"?><container version="1.0" '
+        'xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles>'
+        '<rootfile full-path="OEBPS/content.opf" '
+        'media-type="application/oebps-package+xml"/></rootfiles></container>'
+    )
+    opf = (
+        '<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0" '
+        'unique-identifier="b"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
+        '<dc:identifier id="b">x</dc:identifier><dc:title>T</dc:title>'
+        "<dc:language>en</dc:language></metadata><manifest>"
+        '<item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/>'
+        '<item id="strike" href="strike.png" media-type="image/png"/>'
+        '</manifest><spine><itemref idref="c1"/></spine></package>'
+    )
+    ch = (
+        '<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml"><head>'
+        "<title>C</title></head><body>"
+        '<h2>Omit <img src="strike.png" alt="Image"/> words</h2>'
+        '<p><img src="strike.png" alt="Image"/></p>'
+        "</body></html>"
+    )
+    with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr("mimetype", "application/epub+zip")
+        zf.writestr("META-INF/container.xml", container)
+        zf.writestr("OEBPS/content.opf", opf)
+        zf.writestr("OEBPS/strike.png", png)
+        zf.writestr("OEBPS/c1.xhtml", ch)
+
+
+def test_inline_image_in_heading_and_generic_caption_dropped(tmp_path) -> None:
+    from breviabook.ir.models import ImageBlock
+
+    epub = tmp_path / "inline.epub"
+    _epub_with_inline_image(epub)
+    doc = EpubParser().parse(epub)
+    blocks = [b for _, b in doc.iter_blocks()]
+
+    heading = next(b for b in blocks if isinstance(b, HeadingBlock))
+    assert heading.text == "Omit words"  # image contributes no text
+    assert heading.rich is not None and "data-image-id=" in heading.rich
+
+    # The image-only paragraph becomes a block image; its generic alt="Image" caption is dropped.
+    img_block = next(b for b in blocks if isinstance(b, ImageBlock))
+    assert img_block.caption is None

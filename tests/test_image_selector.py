@@ -54,3 +54,34 @@ def test_no_images_is_noop() -> None:
     assert result.kept_image_ids == []
     assert result.dropped_image_ids == []
     assert len(result.document.chapters[0].blocks) == 1
+
+
+def test_inline_image_reference_keeps_asset(tmp_path) -> None:
+    from breviabook.images.selector import ImageSelector
+    from breviabook.ir.models import (
+        Chapter,
+        Document,
+        DocumentMetadata,
+        HeadingBlock,
+        ImageAsset,
+    )
+
+    doc = Document(
+        metadata=DocumentMetadata(title="T", source_format="epub"),
+        images={"strike": ImageAsset(image_id="strike", data=b"x", mime="image/png")},
+        chapters=[
+            Chapter(
+                blocks=[
+                    HeadingBlock(
+                        level=2,
+                        text="Omit words",
+                        rich='Omit <img data-image-id="strike"/> words',
+                    )
+                ]
+            )
+        ],
+    )
+    result = ImageSelector().select(doc)
+    # The asset is referenced only inline (no ImageBlock) — it must NOT be dropped.
+    assert "strike" in result.document.images
+    assert result.dropped_image_ids == []

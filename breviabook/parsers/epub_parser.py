@@ -36,6 +36,7 @@ from breviabook.ir.models import (
 from breviabook.parsers.base import ParseError
 from breviabook.utils.htmlsan import (
     ClassStyles,
+    ImgResolver,
     contains_markup,
     parse_class_styles,
     sanitize_inline,
@@ -156,7 +157,8 @@ class EpubParser:
         soup = BeautifulSoup(raw, "lxml")
         body = soup.body or soup
         blocks: list[Block] = []
-        self._walk(body, href, opf_path, manifest, zf, images, blocks, class_styles)
+        img_resolver = self._make_img_resolver(href, opf_path, manifest, zf, images)
+        self._walk(body, href, opf_path, manifest, zf, images, blocks, class_styles, img_resolver)
 
         title: str | None = None
         for block in blocks:
@@ -166,6 +168,30 @@ class EpubParser:
         if title is None and soup.title and soup.title.string:
             title = soup.title.string.strip()
         return Chapter(title=title, blocks=blocks)
+
+    def _make_img_resolver(
+        self,
+        href: str,
+        opf_path: str,
+        manifest: dict[str, tuple[str, str]],
+        zf: zipfile.ZipFile,
+        images: dict[str, ImageAsset],
+    ) -> ImgResolver:
+        """A resolver that registers an inline ``<img>``'s asset and returns its ``image_id``."""
+
+        def resolve(img: Tag) -> str | None:
+            src = img.get("src")
+            if not isinstance(src, str) or not src:
+                return None
+            alt = img.get("alt")
+            alt_str = alt if isinstance(alt, str) else None
+            try:
+                img_path = resolve_archive_href(href, src)
+            except ValueError:
+                return None
+            return self._register_asset(img_path, alt_str, manifest, opf_path, zf, images)
+
+        return resolve
 
     def _walk(
         self,
@@ -177,13 +203,14 @@ class EpubParser:
         images: dict[str, ImageAsset],
         out: list[Block],
         class_styles: ClassStyles,
+        img_resolver: ImgResolver,
     ) -> None:
         for child in node.children:
             if not isinstance(child, Tag):
                 continue
             tag = child.name.lower()
             if tag in _HEADINGS:
-                text, rich = _rich_text(child, class_styles)
+                text, rich = _rich_text(child, class_styles, img_resolver)
                 if text:
                     out.append(HeadingBlock(level=_HEADINGS[tag], text=text, rich=rich))
             elif tag == "pre":
@@ -193,12 +220,12 @@ class EpubParser:
             elif tag == "img":
                 self._add_image(child, href, opf_path, manifest, zf, images, out)
             elif tag == "blockquote":
-                text, rich = _rich_text(child, class_styles)
+                text, rich = _rich_text(child, class_styles, img_resolver)
                 if text:
                     out.append(QuoteBlock(text=text, rich=rich))
             elif tag in ("ul", "ol"):
                 lis = child.find_all("li", recursive=False)
-                pairs = [rt for li in lis if (rt := _rich_text(li, class_styles))[0]]
+                pairs = [rt for li in lis if (rt := _rich_text(li, class_styles, img_resolver))[0]]
                 if pairs:
                     items = [t for t, _ in pairs]
                     riches = [r or t for t, r in pairs]
@@ -207,15 +234,18 @@ class EpubParser:
             elif tag == "table":
                 out.append(self._table_block(child))
             elif tag == "p":
-                imgs = child.find_all("img")
-                text, rich = _rich_text(child, class_styles)
-                if imgs and not text:
-                    self._emit_images(child, href, opf_path, manifest, zf, images, out)
-                elif text:
+                text, rich = _rich_text(child, class_styles, img_resolver)
+                if text:
+                    # Text (possibly mixed with inline images, which live in ``rich``).
                     out.append(ParagraphBlock(text=text, rich=rich))
+                elif child.find("img"):
+                    # Image-only paragraph → standalone block image(s).
+                    self._emit_images(child, href, opf_path, manifest, zf, images, out)
             else:
                 # Structural wrapper (div/section/body/...): recurse for nested blocks.
-                self._walk(child, href, opf_path, manifest, zf, images, out, class_styles)
+                self._walk(
+                    child, href, opf_path, manifest, zf, images, out, class_styles, img_resolver
+                )
 
     def _code_block(self, pre: Tag) -> CodeBlock:
         code_el = pre.find("code")
@@ -272,7 +302,7 @@ class EpubParser:
         image_id = self._register_asset(img_path, alt_str, manifest, opf_path, zf, images)
         if image_id is None:
             return
-        out.append(ImageBlock(image_id=image_id, caption=(caption or alt_str) or None))
+        out.append(ImageBlock(image_id=image_id, caption=_clean_caption(caption or alt_str)))
 
     def _register_asset(
         self,
@@ -307,14 +337,29 @@ class EpubParser:
         return image_id
 
 
-def _rich_text(el: Tag, class_styles: ClassStyles) -> tuple[str, str | None]:
+# Generic alt/caption placeholders that carry no information and only add noise as a caption.
+_GENERIC_CAPTIONS = {"image", "img", "figure", "photo", "picture"}
+
+
+def _clean_caption(caption: str | None) -> str | None:
+    """Drop generic placeholder captions (e.g. ``alt="Image"``) that add only noise."""
+    if caption is None:
+        return None
+    if caption.strip().lower() in _GENERIC_CAPTIONS:
+        return None
+    return caption
+
+
+def _rich_text(
+    el: Tag, class_styles: ClassStyles, img_resolver: ImgResolver | None = None
+) -> tuple[str, str | None]:
     """Return ``(plain_text, rich_or_None)`` for an inline-bearing element.
 
     ``rich`` is sanitized inline HTML kept only when the element actually carries markup; then
     ``text`` is its plain projection so the invariant ``text == strip_tags(rich)`` holds. A plain
     element keeps the original ``get_text`` behaviour and ``rich=None``.
     """
-    rich = sanitize_inline(el, class_styles)
+    rich = sanitize_inline(el, class_styles, img_resolver)
     if contains_markup(rich):
         return strip_tags(rich), rich
     return el.get_text(" ", strip=True), None

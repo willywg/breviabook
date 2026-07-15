@@ -28,21 +28,25 @@ from breviabook.render.base import image_filename
 _IMAGES_DIR = "images"
 
 
-def _inline_md(text: str, rich: str | None) -> str:
+def _inline_md(text: str, rich: str | None, image_links: dict[str, str]) -> str:
     """Convert sanitized inline HTML to Markdown; pass color/other spans through as inline HTML."""
     if rich is None:
         return text
     soup = BeautifulSoup(rich, "html.parser")
-    return "".join(_node_md(c) for c in soup.children)
+    return "".join(_node_md(c, image_links) for c in soup.children)
 
 
-def _node_md(node: PageElement) -> str:
+def _node_md(node: PageElement, image_links: dict[str, str]) -> str:
     if isinstance(node, NavigableString):
         return str(node)
     if not isinstance(node, Tag):
         return ""
     name = node.name.lower()
-    inner = "".join(_node_md(c) for c in node.children)
+    if name == "img":
+        iid = node.get("data-image-id")
+        link = image_links.get(iid) if isinstance(iid, str) else None
+        return f"![]({link})" if link else ""
+    inner = "".join(_node_md(c, image_links) for c in node.children)
     if name in ("em", "i"):
         return f"*{inner}*"
     if name in ("strong", "b"):
@@ -96,18 +100,18 @@ class MarkdownRenderer:
 
     def _render_block(self, block: Block, image_links: dict[str, str]) -> str:
         if isinstance(block, HeadingBlock):
-            return f"{'#' * block.level} {_inline_md(block.text, block.rich)}"
+            return f"{'#' * block.level} {_inline_md(block.text, block.rich, image_links)}"
         if isinstance(block, ParagraphBlock):
-            return _inline_md(block.text, block.rich)
+            return _inline_md(block.text, block.rich, image_links)
         if isinstance(block, CodeBlock):
             return f"```{block.language or ''}\n{block.text.rstrip(chr(10))}\n```"
         if isinstance(block, QuoteBlock):
-            content = _inline_md(block.text, block.rich)
+            content = _inline_md(block.text, block.rich, image_links)
             return "\n".join(f"> {line}" for line in content.splitlines() or [""])
         if isinstance(block, ListBlock):
             riches = block.items_rich if block.items_rich is not None else [None] * len(block.items)
             lines = [
-                f"{f'{i}.' if block.ordered else '-'} {_inline_md(item, rich)}"
+                f"{f'{i}.' if block.ordered else '-'} {_inline_md(item, rich, image_links)}"
                 for i, (item, rich) in enumerate(zip(block.items, riches, strict=True), 1)
             ]
             return "\n".join(lines)
