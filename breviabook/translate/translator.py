@@ -240,14 +240,25 @@ class Translator:
         return translations
 
     async def _translate_batch_resilient(self, batch: dict[str, str]) -> dict[str, str]:
-        last_error: TranslateError | None = None
+        """Translate a batch, bisecting on persistent failure to isolate a poison segment.
+
+        One malformed segment (e.g. inline HTML the model can't emit as valid JSON) fails the
+        whole batch. Rather than lose all N units, we split and retry each half, so only the
+        offending segment(s) stay untranslated — the neighbours are recovered in the same run.
+        """
         for _attempt in range(self.max_retries):
             try:
-                return await self._translate_units(batch)
-            except TranslateError as exc:
-                last_error = exc
-        # Give up on this batch: callers fall back to the original text for missing ids.
-        assert last_error is not None
+                return await self._translate_units(batch)  # partial-but-valid replies pass through
+            except TranslateError:
+                continue  # unparseable reply; retry, then bisect below
+        # Persistent JSON failure: split and retry each half so one poison segment doesn't sink
+        # its neighbours. Recurses until the offending segment is alone (then dropped to source).
+        if len(batch) > 1:
+            items = list(batch.items())
+            mid = len(items) // 2
+            left = await self._translate_batch_resilient(dict(items[:mid]))
+            right = await self._translate_batch_resilient(dict(items[mid:]))
+            return {**left, **right}
         return {}
 
     async def _translate_units(self, units: dict[str, str]) -> dict[str, str]:

@@ -506,3 +506,44 @@ async def test_plain_blocks_unaffected_by_rich_path() -> None:
     assert out.blocks[0].text == "ES1"
     assert out.blocks[0].rich is None
     assert t.rich_downgraded == 0
+
+
+class PoisonBatchProvider:
+    """Fails to produce valid JSON whenever a specific 'poison' segment is in the batch."""
+
+    name = "poison"
+
+    def __init__(self, poison_text: str) -> None:
+        self.poison_text = poison_text
+        self.calls = 0
+
+    async def generate(self, messages: list[Message], model: str, **opts: object) -> str:
+        import re
+
+        self.calls += 1
+        content = messages[-1]["content"]
+        if self.poison_text in content:
+            return "}{ not json at all"  # the poison segment breaks the whole reply
+        out = {}
+        for ln in content.splitlines():
+            m = re.match(r"\[(\d+)\]\s(.*)", ln)
+            if m:
+                out[m.group(1)] = f"ES-{m.group(1)}"
+        return _translations(out)
+
+
+async def test_bisection_isolates_poison_segment() -> None:
+    # 8 units in one batch; unit 5 ("boom") makes any batch containing it return invalid JSON.
+    items = [ParagraphBlock(text=f"seg{i}") for i in range(1, 9)]
+    items[4] = ParagraphBlock(text="boom")
+    chapter = Chapter(blocks=items)
+
+    provider = PoisonBatchProvider("boom")
+    t = Translator(provider, "m", "Spanish", max_units_per_batch=40, max_retries=1)
+    out = await t.translate_chapter(chapter)
+
+    texts = [b.text for b in out.blocks]
+    # Only the poison neighbour stays in source; all 7 others are recovered in this one run.
+    assert texts[4] == "boom"  # untranslated (fell back to source)
+    assert t.untranslated_units == 1
+    assert all(txt.startswith("ES-") for i, txt in enumerate(texts) if i != 4)
