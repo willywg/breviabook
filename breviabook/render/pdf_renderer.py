@@ -25,6 +25,7 @@ section.chapter:first-of-type { page-break-before: avoid; }
 pre { background: #f4f4f4; padding: 0.6em; border-radius: 4px; white-space: pre-wrap;
       font-family: monospace; font-size: 0.9em; }
 code { font-family: monospace; }
+a { color: #0b57d0; }
 figure { margin: 1em 0; text-align: center; }
 img { max-width: 100%; }
 figcaption { font-size: 0.85em; color: #555; }

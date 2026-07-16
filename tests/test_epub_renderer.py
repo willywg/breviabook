@@ -92,3 +92,29 @@ def test_deterministic_output(tmp_path: Path) -> None:
     a = EpubRenderer().render(doc, tmp_path / "a")
     b = EpubRenderer().render(doc, tmp_path / "b")
     assert a.read_bytes() == b.read_bytes()
+
+
+def test_rich_inline_html_emitted_in_chapter(tmp_path: Path) -> None:
+    from breviabook.ir.models import HeadingBlock, ParagraphBlock
+
+    doc = Document(
+        metadata=DocumentMetadata(title="T", source_format="epub"),
+        chapters=[
+            Chapter(
+                blocks=[
+                    HeadingBlock(
+                        level=2,
+                        text="CHAPTER 1 Guiding",
+                        rich='<span style="color:#9e0b0f"><strong>Guiding</strong></span>',
+                    ),
+                    ParagraphBlock(text="plain", rich=None),
+                ]
+            )
+        ],
+    )
+    out = EpubRenderer().render(doc, tmp_path, stem="styled")
+    with zipfile.ZipFile(out) as zf:
+        names = [n for n in zf.namelist() if n.endswith(".xhtml") and "nav" not in n]
+        body = zf.read(f"OEBPS/{names[0].split('/')[-1]}").decode("utf-8")
+    assert '<span style="color:#9e0b0f"><strong>Guiding</strong></span>' in body
+    assert "<p>plain</p>" in body  # plain block still escaped-plain

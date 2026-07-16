@@ -29,6 +29,7 @@ from breviabook.ir.models import (
 from breviabook.llm.base import LLMProvider, Message
 from breviabook.persistence.checkpoint import CheckpointManager
 from breviabook.translate.glossary import Glossary
+from breviabook.utils.htmlsan import inline_tag_signature, sanitize_inline, strip_tags
 from breviabook.utils.jsonx import extract_json_object
 
 
@@ -60,6 +61,9 @@ def build_translate_messages(
 Rules:
 - Translate only natural-language prose; keep meaning and technical accuracy.
 - Preserve identifiers, API names, file paths, URLs, and numbers exactly (do not translate them).
+- Some segments contain inline HTML tags (<em>, <strong>, <a>, <code>, <span>, <sup>, <sub>, <s>).
+  Keep every tag and its attributes exactly as written; translate only the visible text between
+  tags. Do not add, remove, reorder, or re-nest tags.
 - Do not add or remove segments; translate each one.
 {glossary_block}
 Return ONLY a JSON object (no prose, no fences) of the form:
@@ -98,6 +102,9 @@ class Translator:
         self.checkpoint = checkpoint
         self.untranslated_units = 0
         self.reused_batches = 0
+        # Segments whose translation diverged from the source's inline tags: we keep the translated
+        # text but drop styling for that one segment (never emit misattributed markup).
+        self.rich_downgraded = 0
 
     async def translate_document(
         self,
@@ -114,22 +121,31 @@ class Translator:
 
     async def translate_chapter(self, chapter: Chapter, *, chapter_index: int = 0) -> Chapter:
         units: dict[str, str] = {}
+        # uid -> source rich (inline HTML) when the segment carries markup, else None.
+        source_rich: dict[str, str | None] = {}
         counter = 0
 
-        def add(text: str) -> str:
+        def add(text: str, rich: str | None = None) -> str:
             nonlocal counter
             counter += 1
             uid = str(counter)
-            units[uid] = text
+            units[uid] = rich if rich is not None else text  # send the styled form when present
+            source_rich[uid] = rich
             return uid
 
         title_uid = add(chapter.title) if chapter.title else None
         plan: list[tuple[str, Block, str | list[str] | None]] = []
         for block in chapter.blocks:
             if isinstance(block, (HeadingBlock, ParagraphBlock, QuoteBlock)):
-                plan.append(("text", block, add(block.text)))
+                plan.append(("text", block, add(block.text, block.rich)))
             elif isinstance(block, ListBlock):
-                plan.append(("list", block, [add(item) for item in block.items]))
+                src_riches: list[str | None] = (
+                    list(block.items_rich)
+                    if block.items_rich is not None
+                    else [None] * len(block.items)
+                )
+                uids = [add(item, r) for item, r in zip(block.items, src_riches, strict=True)]
+                plan.append(("list", block, uids))
             else:
                 plan.append(("keep", block, None))
 
@@ -137,22 +153,41 @@ class Translator:
             return chapter
 
         translations = await self._translate_batched(units, chapter_index)
+
+        def resolve(uid: str, orig_text: str) -> tuple[str, str | None]:
+            """Map a translated segment back to ``(text, rich)``, validating any inline tags."""
+            raw = translations.get(uid)
+            src = source_rich[uid]
+            if raw is None:
+                return orig_text, src  # untranslated: keep source text + styling
+            if src is None:
+                return raw, None  # plain segment: translated plain text
+            san = sanitize_inline(raw)
+            if inline_tag_signature(san) == inline_tag_signature(src):
+                return strip_tags(san), san  # translated + faithful styling
+            # Tags diverged: trust the translated text, drop styling for this one segment.
+            self.rich_downgraded += 1
+            return strip_tags(san), None
+
         new_blocks: list[Block] = []
         for kind, block, ref in plan:
             if kind == "text" and isinstance(ref, str):
-                text = self._original_text(block)
-                new_blocks.append(block.model_copy(update={"text": translations.get(ref, text)}))
+                text, rich = resolve(ref, self._original_text(block))
+                new_blocks.append(block.model_copy(update={"text": text, "rich": rich}))
             elif kind == "list" and isinstance(ref, list) and isinstance(block, ListBlock):
-                items = [
-                    translations.get(uid, orig) for uid, orig in zip(ref, block.items, strict=True)
-                ]
-                new_blocks.append(block.model_copy(update={"items": items}))
+                resolved = [resolve(uid, orig) for uid, orig in zip(ref, block.items, strict=True)]
+                items = [t for t, _ in resolved]
+                out_riches = [r for _, r in resolved]
+                items_rich = out_riches if any(r is not None for r in out_riches) else None
+                new_blocks.append(
+                    block.model_copy(update={"items": items, "items_rich": items_rich})
+                )
             else:
                 new_blocks.append(block)
 
         new_title = chapter.title
         if title_uid is not None and chapter.title is not None:
-            new_title = translations.get(title_uid, chapter.title)
+            new_title, _ = resolve(title_uid, chapter.title)
         return Chapter(title=new_title, blocks=new_blocks)
 
     async def _translate_batched(
@@ -205,14 +240,25 @@ class Translator:
         return translations
 
     async def _translate_batch_resilient(self, batch: dict[str, str]) -> dict[str, str]:
-        last_error: TranslateError | None = None
+        """Translate a batch, bisecting on persistent failure to isolate a poison segment.
+
+        One malformed segment (e.g. inline HTML the model can't emit as valid JSON) fails the
+        whole batch. Rather than lose all N units, we split and retry each half, so only the
+        offending segment(s) stay untranslated — the neighbours are recovered in the same run.
+        """
         for _attempt in range(self.max_retries):
             try:
-                return await self._translate_units(batch)
-            except TranslateError as exc:
-                last_error = exc
-        # Give up on this batch: callers fall back to the original text for missing ids.
-        assert last_error is not None
+                return await self._translate_units(batch)  # partial-but-valid replies pass through
+            except TranslateError:
+                continue  # unparseable reply; retry, then bisect below
+        # Persistent JSON failure: split and retry each half so one poison segment doesn't sink
+        # its neighbours. Recurses until the offending segment is alone (then dropped to source).
+        if len(batch) > 1:
+            items = list(batch.items())
+            mid = len(items) // 2
+            left = await self._translate_batch_resilient(dict(items[:mid]))
+            right = await self._translate_batch_resilient(dict(items[mid:]))
+            return {**left, **right}
         return {}
 
     async def _translate_units(self, units: dict[str, str]) -> dict[str, str]:

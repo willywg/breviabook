@@ -16,7 +16,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from breviabook.ir.models import Chapter, Document, ImageBlock
+from breviabook.ir.models import (
+    Chapter,
+    Document,
+    HeadingBlock,
+    ImageBlock,
+    ListBlock,
+    ParagraphBlock,
+    QuoteBlock,
+)
+from breviabook.utils.htmlsan import inline_image_ids
 
 
 @dataclass
@@ -28,13 +37,30 @@ class SelectionResult:
     dropped_image_ids: list[str]
 
 
+def _inline_ids(block: object) -> list[str]:
+    """Collect inline-image ids referenced in a block's rich HTML (heading/paragraph/quote/list)."""
+    if isinstance(block, (HeadingBlock, ParagraphBlock, QuoteBlock)) and block.rich:
+        return inline_image_ids(block.rich)
+    if isinstance(block, ListBlock) and block.items_rich:
+        ids: list[str] = []
+        for item_rich in block.items_rich:
+            ids.extend(inline_image_ids(item_rich))
+        return ids
+    return []
+
+
 class ImageSelector:
     """Strategy A image selector (structural, no LLM)."""
 
     def select(self, doc: Document) -> SelectionResult:
-        referenced = {
-            block.image_id for _, block in doc.iter_blocks() if isinstance(block, ImageBlock)
-        }
+        referenced: set[str] = set()
+        for _, block in doc.iter_blocks():
+            if isinstance(block, ImageBlock):
+                referenced.add(block.image_id)
+            else:
+                # Inline images live inside a block's rich HTML, not as ImageBlocks — count them
+                # as referenced too, or Strategy A would prune their assets as unused.
+                referenced.update(_inline_ids(block))
         kept = sorted(iid for iid in doc.images if iid in referenced)
         dropped = sorted(iid for iid in doc.images if iid not in referenced)
 

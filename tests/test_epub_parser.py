@@ -85,3 +85,115 @@ def test_zip_slip_href_rejected() -> None:
 
 def test_safe_href_resolves() -> None:
     assert resolve_archive_href("OEBPS/content.opf", "images/fig1.png") == "OEBPS/images/fig1.png"
+
+
+def _epub_with_styling(path: Path) -> None:
+    """Write a minimal EPUB whose content mixes class-color, italic, a link, and plain text."""
+    import zipfile
+
+    container = (
+        '<?xml version="1.0"?><container version="1.0" '
+        'xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles>'
+        '<rootfile full-path="OEBPS/content.opf" '
+        'media-type="application/oebps-package+xml"/></rootfiles></container>'
+    )
+    opf = (
+        '<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0" '
+        'unique-identifier="b"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
+        '<dc:identifier id="b">x</dc:identifier><dc:title>T</dc:title>'
+        "<dc:language>en</dc:language></metadata><manifest>"
+        '<item id="css" href="s.css" media-type="text/css"/>'
+        '<item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/>'
+        '</manifest><spine><itemref idref="c1"/></spine></package>'
+    )
+    css = ".red { color: #9e0b0f } .ital { font-style: italic }"
+    ch = (
+        '<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml"><head>'
+        "<title>C</title></head><body>"
+        '<h2><span class="red">CHAPTER 1</span> <b>Don\'t</b> think</h2>'
+        '<p>A <span class="ital">plain</span> mix with '
+        '<a href="https://x.com">a link</a>.</p>'
+        "<p>Totally plain paragraph.</p>"
+        "</body></html>"
+    )
+    with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr("mimetype", "application/epub+zip")
+        zf.writestr("META-INF/container.xml", container)
+        zf.writestr("OEBPS/content.opf", opf)
+        zf.writestr("OEBPS/s.css", css)
+        zf.writestr("OEBPS/c1.xhtml", ch)
+
+
+def test_inline_formatting_extracted_to_rich(tmp_path) -> None:
+    epub = tmp_path / "styled.epub"
+    _epub_with_styling(epub)
+    doc = EpubParser().parse(epub)
+    blocks = [b for _, b in doc.iter_blocks()]
+
+    heading = next(b for b in blocks if isinstance(b, HeadingBlock))
+    assert heading.text == "CHAPTER 1 Don't think"  # plain projection preserved
+    assert heading.rich is not None
+    assert "color:#9e0b0f" in heading.rich and "<strong>Don" in heading.rich
+
+    paras = [b for b in blocks if isinstance(b, ParagraphBlock)]
+    styled = next(b for b in paras if b.rich is not None)
+    assert "<em>plain</em>" in styled.rich
+    assert '<a href="https://x.com">a link</a>' in styled.rich
+
+    plain = next(b for b in paras if b.text == "Totally plain paragraph.")
+    assert plain.rich is None  # no markup → stays simple
+
+
+def _epub_with_inline_image(path: Path) -> None:
+    import zipfile
+
+    png = (
+        b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+        b"\x08\x00\x00\x00\x00:~\x9bU\x00\x00\x00\nIDATx\x9cc\xf8\x0f\x00\x01"
+        b"\x01\x01\x00\x18\xdd\x8d\xb0\x00\x00\x00\x00IEND\xaeB`\x82"
+    )
+    container = (
+        '<?xml version="1.0"?><container version="1.0" '
+        'xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles>'
+        '<rootfile full-path="OEBPS/content.opf" '
+        'media-type="application/oebps-package+xml"/></rootfiles></container>'
+    )
+    opf = (
+        '<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0" '
+        'unique-identifier="b"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
+        '<dc:identifier id="b">x</dc:identifier><dc:title>T</dc:title>'
+        "<dc:language>en</dc:language></metadata><manifest>"
+        '<item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/>'
+        '<item id="strike" href="strike.png" media-type="image/png"/>'
+        '</manifest><spine><itemref idref="c1"/></spine></package>'
+    )
+    ch = (
+        '<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml"><head>'
+        "<title>C</title></head><body>"
+        '<h2>Omit <img src="strike.png" alt="Image"/> words</h2>'
+        '<p><img src="strike.png" alt="Image"/></p>'
+        "</body></html>"
+    )
+    with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr("mimetype", "application/epub+zip")
+        zf.writestr("META-INF/container.xml", container)
+        zf.writestr("OEBPS/content.opf", opf)
+        zf.writestr("OEBPS/strike.png", png)
+        zf.writestr("OEBPS/c1.xhtml", ch)
+
+
+def test_inline_image_in_heading_and_generic_caption_dropped(tmp_path) -> None:
+    from breviabook.ir.models import ImageBlock
+
+    epub = tmp_path / "inline.epub"
+    _epub_with_inline_image(epub)
+    doc = EpubParser().parse(epub)
+    blocks = [b for _, b in doc.iter_blocks()]
+
+    heading = next(b for b in blocks if isinstance(b, HeadingBlock))
+    assert heading.text == "Omit words"  # image contributes no text
+    assert heading.rich is not None and "data-image-id=" in heading.rich
+
+    # The image-only paragraph becomes a block image; its generic alt="Image" caption is dropped.
+    img_block = next(b for b in blocks if isinstance(b, ImageBlock))
+    assert img_block.caption is None
