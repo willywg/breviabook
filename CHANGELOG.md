@@ -6,6 +6,10 @@ All notable changes to BreviaBook are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-07-16
+
+Full-book translation and preserved inline styling.
+
 ### Added
 - `breviabook translate INPUT --to LANG` — translates the full book to the target language
   without condensing it, preserving code, tables, and images. Supports `--resume` with a
@@ -16,11 +20,22 @@ All notable changes to BreviaBook are documented here. The format follows
   `out_dir/.breviabook/{stem}-{lang}.jsonl`. An interrupted `--resume` reuses them and only
   pays for the remaining batches. The hash guard includes target language and glossary content
   to prevent silent corruption when re-running with different settings.
+- **Inline formatting is preserved** through parse → translate → render: bold, italic, links,
+  inline code, and **color** (both inline styles and CSS-class-resolved, e.g. colored headings).
+  Text blocks gained a sanitized `rich` field; a strict allowlist keeps untrusted EPUB markup
+  safe. `text` stays the plain projection, so condensation is unchanged.
+- **Inline images** embedded mid-text (e.g. a small icon inside a heading) are kept and rendered
+  in place, not dropped.
 - `untranslated_units` warning surfaced at the end of both `condense` and `translate` runs.
 
 ### Changed
-- `condense` and `translate` now share ~50 lines of CLI plumbing (validation helpers, report
-  tables) extracted from `cli.py` — no copy-paste.
+- Translation sends the styled form and instructs the model to keep tags; the reply is
+  re-sanitized and its tag signature verified. On divergence the translated text is kept and
+  only that segment's styling is dropped — never misattributed markup.
+- On a persistent malformed-JSON reply, a batch is **bisected** and each half retried, so one
+  problematic segment no longer sinks its ~40 neighbours into the source language.
+- Generic image captions (`alt="Image"`, "Figure", …) are dropped instead of rendered as text.
+- `condense` and `translate` share CLI plumbing (validation helpers, report tables) — no copy-paste.
 
 ## [0.1.0] — 2026-06-25
 
@@ -44,4 +59,5 @@ preserving code, tables, and meaningful figures, with optional same-pass transla
 - `--dry-run` token/page/compression/cost estimate; per-run usage report; compression and
   approximate page counts; `--resume` from a JSONL checkpoint.
 
+[0.2.0]: https://github.com/willywg/breviabook/releases/tag/v0.2.0
 [0.1.0]: https://github.com/willywg/breviabook/releases/tag/v0.1.0

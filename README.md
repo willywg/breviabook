@@ -25,10 +25,14 @@ can deliver the result in your language (e.g. English → Spanish) in one go.
 - **Image preservation (the differentiator)** — keeps images whose section survives
   (Strategy A); optional **vision ranking** (`--rank-images`) drops decorative images and
   improves captions.
-- **Integrated translation** — translates the *already-condensed* book (much cheaper) with an
-  optional glossary for consistent terminology; code stays untranslated. Runs in resilient
-  batches: a malformed model response retries and falls back to the source text instead of
-  crashing the run.
+- **Integrated translation** — condense-and-translate in one pass, or translate the **full** book
+  without condensing (`breviabook translate`). Optional glossary for consistent terminology; code
+  stays untranslated. Resilient batches: a malformed model response retries, then **bisects** to
+  isolate the offending segment so its neighbours still translate, and falls back to the source
+  text rather than crashing.
+- **Inline formatting preserved** — bold, italic, links, inline code, **color** (including
+  CSS-class-styled headings), and images embedded mid-text survive parse → translate → render.
+  Untrusted source markup is sanitized to a strict allowlist.
 - **Three outputs** — EPUB (our own builder), PDF (weasyprint), Markdown.
 - **Live TUI** — a banner plus per-phase progress bars (parse → condense → synthesize →
   translate → render) and a usage panel that ticks token/cost totals in real time. Degrades to
