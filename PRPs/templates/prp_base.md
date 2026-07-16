@@ -59,7 +59,7 @@ uv run ruff check .
 uv run ruff format --check .
 uv run mypy --strict breviabook
 uv run pytest -q
-uv run pip-licenses --fail-on "GPL"
+uv run pip-licenses --partial-match --fail-on "General Public License;GPL" --ignore-packages pyphen
 ```
 
 ### Feature-specific checks

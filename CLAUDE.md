@@ -31,7 +31,10 @@ with checkpoint/resume between chunking and translation. See ROADMAP §5.
   line-by-line translate their code. Keep them OUTSIDE this tree (`~/projects/open-source/`),
   never vendor or submodule them.
 - **No AGPL/GPL runtime dependencies — ever.** Forbidden: `ebooklib`, `PyMuPDF`/`fitz`.
-  Use the permissive substitutes below. CI enforces this with `pip-licenses --fail-on "GPL"`.
+  Use the permissive substitutes below. CI enforces this with
+  `pip-licenses --partial-match --fail-on "General Public License;GPL" --ignore-packages pyphen`
+  (partial match catches "GNU AFFERO GPL 3.0"-style strings; pyphen is ignored because we
+  elect MPL 1.1 from its disjunctive GPLv2+/LGPLv2+/MPL-1.1 tri-license).
 - **Never commit** API keys or job databases (`.env`, `*.sqlite` are gitignored).
 
 ## Tech stack (permissive only)
@@ -50,7 +53,9 @@ uv run ruff check .            # lint (rules: E,F,I,UP,B,SIM)
 uv run ruff format --check .   # format
 uv run mypy --strict breviabook    # types — strict mode, type the whole pipeline
 uv run pytest                  # tests (pytest + pytest-asyncio)
-uv run pip-licenses --fail-on "GPL"   # license audit — blocks any GPL/AGPL dep
+# license audit — blocks any GPL/AGPL dep. pyphen ignored: MPL 1.1 elected from its
+# disjunctive GPLv2+/LGPLv2+/MPL-1.1 tri-license (see ROADMAP §14).
+uv run pip-licenses --partial-match --fail-on "General Public License;GPL" --ignore-packages pyphen
 ```
 
 `ruff` and `mypy` must pass clean from the first commit. Use a deterministic **mock

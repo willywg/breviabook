@@ -110,7 +110,7 @@ Benefit: adding an input or output format = writing one parser or one renderer, 
 - **`mypy`** — static type checking in `strict` mode. Pays off a lot with the pydantic IR; type the whole pipeline.
 - **`pytest`** + **`pytest-asyncio`** — tests (see §11).
 - **`pre-commit`** with hooks: `ruff` (lint+format), `mypy`, and `pytest` for unit tests. Better than TBL, which only uses isort + basic hooks and has no type checking.
-- **`pip-licenses`** — license audit of the full dependency tree. Run it in CI with `--fail-on "GPL"` so the pipeline fails if any dependency (direct or transitive) introduces GPL/AGPL. This is the automated guarantee behind §14, not a manual review.
+- **`pip-licenses`** — license audit of the full dependency tree. Run it in CI with `--partial-match --fail-on "General Public License;GPL" --ignore-packages pyphen` so the pipeline fails if any dependency (direct or transitive) introduces GPL/AGPL. Exact-name matching is not enough: `--fail-on "GPL"` alone misses strings like "GNU AFFERO GPL 3.0" (PyMuPDF) and "GNU Affero General Public License v3" (ebooklib). `pyphen` is ignored because we elect MPL 1.1 from its disjunctive GPLv2+/LGPLv2+/MPL-1.1 tri-license (see §14). This is the automated guarantee behind §14, not a manual review.
 
 ---
 
@@ -282,7 +282,7 @@ Keys accept a comma-separated list for rotation (TBL pattern).
 
 Build in this order; each phase must be functional and tested before the next. Each phase = one PRP.
 
-- **Phase 0 — Scaffold.** `pyproject.toml`, folder structure, `config.py`, CLI skeleton with `typer`, `.env.example`. **Quality tooling configured up front:** `ruff` (lint+format) and `mypy` (strict) in `pyproject.toml`, `pytest` + `pytest-asyncio`, and `.pre-commit-config.yaml` with ruff + mypy + pytest hooks. **CI workflow** (`.github/workflows/ci.yml`) running ruff + mypy + pytest + **`pip-licenses --fail-on "GPL"`** (blocks any GPL/AGPL dependency). `LICENSE` file with **Apache-2.0** and a `NOTICE` with the inspiration attribution (see §14). LLM layer `base.py` + `factory.py` + **Ollama** provider (or LiteLLM) working with a "hello world." `mypy` and `ruff` must pass clean from the first commit.
+- **Phase 0 — Scaffold.** `pyproject.toml`, folder structure, `config.py`, CLI skeleton with `typer`, `.env.example`. **Quality tooling configured up front:** `ruff` (lint+format) and `mypy` (strict) in `pyproject.toml`, `pytest` + `pytest-asyncio`, and `.pre-commit-config.yaml` with ruff + mypy + pytest hooks. **CI workflow** (`.github/workflows/ci.yml`) running ruff + mypy + pytest + **`pip-licenses --partial-match --fail-on "General Public License;GPL" --ignore-packages pyphen`** (blocks any GPL/AGPL dependency; pyphen ignored — MPL 1.1 elected from its tri-license, see §14). `LICENSE` file with **Apache-2.0** and a `NOTICE` with the inspiration attribution (see §14). LLM layer `base.py` + `factory.py` + **Ollama** provider (or LiteLLM) working with a "hello world." `mypy` and `ruff` must pass clean from the first commit.
 - **Phase 1 — IR + EPUB parser.** Define `ir/models.py`. `epub_parser.py`: EPUB → `Document` with image extraction as assets. Test that it parses the fixture without losing blocks or images.
 - **Phase 2 — Markdown renderer.** `md_renderer.py`: `Document` → `.md` (with image links). This validates the IR end-to-end (parse EPUB → render MD) **without an LLM yet**.
 - **Phase 3 — Chunker + checkpoint.** Chapter-aware, token-based chunking, without splitting code. Persistence/resume.

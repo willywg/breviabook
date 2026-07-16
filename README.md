@@ -251,7 +251,7 @@ See the full design and build plan in **[docs/ROADMAP.md](docs/ROADMAP.md)**.
 uv run ruff check . && uv run ruff format --check .   # lint + format
 uv run mypy --strict breviabook                           # types
 uv run pytest -q                                       # tests
-uv run pip-licenses --fail-on "GPL"                    # license audit (blocks GPL/AGPL)
+uv run pip-licenses --partial-match --fail-on "General Public License;GPL" --ignore-packages pyphen   # license audit (blocks GPL/AGPL; pyphen ignored — MPL 1.1 elected from its tri-license)
 ```
 
 ## License

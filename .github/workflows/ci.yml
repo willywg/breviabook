@@ -39,4 +39,8 @@ jobs:
         run: uv run pytest -q
 
       - name: License audit (fail on any GPL/AGPL dependency)
-        run: uv run pip-licenses --fail-on "GPL"
+        # --partial-match: exact-name matching misses strings like "GNU AFFERO GPL 3.0"
+        # (PyMuPDF) or "GNU Affero General Public License v3" (ebooklib).
+        # pyphen is ignored: it is tri-licensed GPLv2+/LGPLv2+/MPL-1.1 (disjunctive) and
+        # we elect MPL 1.1 — its GPL branch would false-positive the build.
+        run: uv run pip-licenses --partial-match --fail-on "General Public License;GPL" --ignore-packages pyphen
