@@ -2,33 +2,36 @@
 
 Two threats are guarded here:
 
-* **Zip-slip** — when unpacking an EPUB (a ZIP), an entry path like ``../../etc/x`` must
-  not escape the extraction root. ``safe_extract_path`` validates each entry. Used from
-  Phase 1's EPUB parser.
+* **Zip-slip (archive-internal)** — EPUBs are read fully in-memory (``ZipFile.read``),
+  never extracted to disk, so no filesystem extraction guard is needed. The live guard is
+  ``resolve_archive_href``: an XHTML href like ``../../secret`` must not escape the
+  archive root when resolving manifest paths.
 * **SSRF / key leakage** — with an arbitrary ``--api-endpoint``, we must never forward a
   provider's API key to an unexpected host. ``assert_endpoint_allowed`` enforces that the
-  call target matches the configured provider host. Fully wired in Phase 9; defined now so
-  the contract exists from the start.
+  call target is the provider's canonical host or a local/private one
+  (``is_local_host``). Wired in ``breviabook.llm.factory``.
 """
 
 from __future__ import annotations
 
-import os
+import ipaddress
 import posixpath
 from urllib.parse import unquote, urlparse
 
 
-def safe_extract_path(base_dir: str, entry_name: str) -> str:
-    """Resolve ``entry_name`` under ``base_dir``, refusing any path that escapes it.
+def is_local_host(host: str) -> bool:
+    """Return True if ``host`` is provably local.
 
-    Raises:
-        ValueError: if the resolved path would land outside ``base_dir`` (zip-slip).
+    Local means a loopback / private / link-local / reserved IP literal, or a
+    ``localhost`` / ``*.localhost`` / ``.local`` hostname. Bare single-label hostnames
+    (e.g. ``gpubox``) resolve via search-domain and cannot be proven private, so they
+    are NOT considered local.
     """
-    base = os.path.realpath(base_dir)
-    target = os.path.realpath(os.path.join(base, entry_name))
-    if target != base and not target.startswith(base + os.sep):
-        raise ValueError(f"Unsafe archive entry path (zip-slip): {entry_name!r}")
-    return target
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return host == "localhost" or host.endswith((".localhost", ".local"))
+    return ip.is_loopback or ip.is_private or ip.is_link_local or ip.is_reserved
 
 
 def resolve_archive_href(base_href: str, rel_href: str) -> str:
@@ -58,5 +61,7 @@ def assert_endpoint_allowed(endpoint: str, allowed_hosts: set[str]) -> None:
     if host not in allowed_hosts:
         raise ValueError(
             f"Refusing to send credentials to unlisted host {host!r}; "
-            f"allowed: {sorted(allowed_hosts)}"
+            f"allowed: {sorted(allowed_hosts)}. "
+            "If this is your own server, use its private IP or a .local name, "
+            "or unset the provider API key to connect without credentials."
         )

@@ -2,11 +2,14 @@
 
 Ollama is local (no key). OpenAI/Gemini/OpenRouter use litellm with a key-rotation pool built
 from the configured comma-separated keys. OpenAI also accepts ``api_endpoint`` (base_url) for
-OpenAI-compatible servers; only OpenAI does, so a provider never sends its key to another
-provider's host (ROADMAP §12).
+OpenAI-compatible servers; only OpenAI does, and the endpoint is validated (explicit http(s)
+scheme; canonical or provably local host) before any configured key is attached, so a provider
+never sends its key to another host (ROADMAP §12).
 """
 
 from __future__ import annotations
+
+from urllib.parse import urlparse
 
 from breviabook.config import Settings
 from breviabook.llm.base import LLMProvider
@@ -16,8 +19,10 @@ from breviabook.llm.providers.litellm_base import LiteLLMProvider
 from breviabook.llm.providers.ollama import OllamaProvider
 from breviabook.llm.providers.openai import OpenAIProvider
 from breviabook.llm.providers.openrouter import OpenRouterProvider
+from breviabook.utils.security import assert_endpoint_allowed, is_local_host
 
 _SUPPORTED = ("ollama", "openai", "gemini", "openrouter")
+_OPENAI_HOST = "api.openai.com"
 _ENV_VAR = {
     "openai": "OPENAI_API_KEY",
     "gemini": "GEMINI_API_KEY",
@@ -38,6 +43,24 @@ def _resolve_reasoning_effort(provider_key: str, requested: str | None) -> str |
     if provider_key in _THINKING_ON_BY_DEFAULT:
         return "disable"
     return None
+
+
+def _assert_endpoint_safe(endpoint: str, *, keys_configured: bool) -> None:
+    """Reject unsafe OpenAI-compatible endpoints before any credentials are attached.
+
+    Always requires an explicit http(s) scheme. With real keys configured, the host must
+    be OpenAI's canonical host or a provably local one — a configured cloud key is never
+    forwarded to an arbitrary host (SSRF / key-leakage, ROADMAP §12).
+    """
+    if urlparse(endpoint).scheme not in ("http", "https"):
+        raise ValueError(f"Invalid --api-endpoint {endpoint!r}: must include http:// or https://")
+    if not keys_configured:
+        return
+    host = urlparse(endpoint).hostname or ""
+    allowed = {_OPENAI_HOST}
+    if is_local_host(host):
+        allowed.add(host)
+    assert_endpoint_allowed(endpoint, allowed)
 
 
 def _missing_key(provider: str) -> ValueError:
@@ -78,6 +101,8 @@ def _build(key: str, settings: Settings, api_endpoint: str | None) -> LLMProvide
         return OllamaProvider(endpoint=api_endpoint or settings.ollama_endpoint)
     if key == "openai":
         keys = settings.keys_for("openai")
+        if api_endpoint:
+            _assert_endpoint_safe(api_endpoint, keys_configured=bool(keys))
         if not keys:
             if not api_endpoint:
                 raise _missing_key("openai")

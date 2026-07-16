@@ -86,6 +86,62 @@ def test_openai_has_no_default_reasoning_effort() -> None:
     assert "reasoning_effort" not in provider.extra_opts  # type: ignore[attr-defined]
 
 
+_FAKE_KEY = "sk-fake-key-must-never-leak"
+
+
+def test_real_key_refused_on_public_custom_endpoint() -> None:
+    settings = Settings(openai_api_key=_FAKE_KEY)
+    with pytest.raises(ValueError, match="attacker.example") as exc_info:
+        get_provider("openai", settings, api_endpoint="https://attacker.example/v1")
+    assert _FAKE_KEY not in str(exc_info.value)
+
+
+def test_real_key_refused_on_bare_lan_hostname() -> None:
+    # Bare single-label hostnames resolve via search-domain and are not provably private.
+    settings = Settings(openai_api_key=_FAKE_KEY)
+    with pytest.raises(ValueError, match="gpubox") as exc_info:
+        get_provider("openai", settings, api_endpoint="http://gpubox:8000/v1")
+    msg = str(exc_info.value)
+    assert "private IP" in msg
+    assert _FAKE_KEY not in msg
+
+
+def test_endpoint_without_scheme_fails_fast() -> None:
+    with pytest.raises(ValueError, match="must include http:// or https://"):
+        get_provider("openai", Settings(openai_api_key=""), api_endpoint="localhost:1234")
+
+
+def test_real_key_allowed_on_canonical_openai_host() -> None:
+    settings = Settings(openai_api_key="k")
+    provider = get_provider("openai", settings, api_endpoint="https://api.openai.com/v1")
+    assert isinstance(provider, OpenAIProvider)
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "http://localhost:1234/v1",
+        "http://127.0.0.1:1234/v1",
+        "http://192.168.1.50:8000/v1",
+        "http://[::1]:1234/v1",
+        "http://nas.local:8000/v1",
+    ],
+)
+def test_real_key_allowed_on_local_endpoints(endpoint: str) -> None:
+    settings = Settings(openai_api_key="k")
+    provider = get_provider("openai", settings, api_endpoint=endpoint)
+    assert isinstance(provider, OpenAIProvider)
+    assert provider.base_url == endpoint
+
+
+def test_no_key_custom_endpoint_on_public_host_still_works() -> None:
+    # Without a configured key there is nothing to leak; the EMPTY placeholder is sent.
+    empty = Settings(openai_api_key="")
+    provider = get_provider("openai", empty, api_endpoint="https://vllm.example.com/v1")
+    assert isinstance(provider, OpenAIProvider)
+    assert provider.base_url == "https://vllm.example.com/v1"
+
+
 def test_mock_provider_satisfies_protocol() -> None:
     provider = MockProvider()
     assert isinstance(provider, LLMProvider)
