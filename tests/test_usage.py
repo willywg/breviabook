@@ -80,11 +80,16 @@ async def test_pipeline_surfaces_usage(tmp_path: Path) -> None:
     assert result.usage.prompt_tokens > 0
 
 
-async def test_pipeline_usage_none_when_provider_untracked(tmp_path: Path) -> None:
+async def test_pipeline_surfaces_empty_usage_when_fake_does_not_accumulate(
+    tmp_path: Path,
+) -> None:
     import json
 
     class PlainProvider:
         name = "plain"
+
+        def __init__(self) -> None:
+            self.usage = Usage()
 
         async def generate(self, messages: list[Message], model: str, **opts: object) -> str:
             return json.dumps({"texts": {"1": "c"}, "essential_images": []})
@@ -96,4 +101,5 @@ async def test_pipeline_usage_none_when_provider_untracked(tmp_path: Path) -> No
         provider=PlainProvider(),
         model="m",
     )
-    assert result.usage is None  # provider doesn't track usage
+    assert result.usage is not None
+    assert result.usage.calls == 0  # fake never calls usage.add

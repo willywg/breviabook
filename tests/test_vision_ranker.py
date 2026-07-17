@@ -16,6 +16,7 @@ from breviabook.ir.models import (
     ParagraphBlock,
 )
 from breviabook.llm.base import Message
+from breviabook.llm.usage import Usage
 from breviabook.persistence.checkpoint import CheckpointManager
 
 
@@ -29,6 +30,7 @@ class FakeVisionProvider:
         self.caption = caption
         self.image_calls = 0
         self.last_prompt = ""
+        self.usage = Usage()
 
     async def generate(self, messages: list[Message], model: str, **opts: object) -> str:
         return "{}"

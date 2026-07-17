@@ -16,6 +16,7 @@ from breviabook.ir.models import (
     ParagraphBlock,
 )
 from breviabook.llm.base import Message
+from breviabook.llm.usage import Usage
 from breviabook.persistence.checkpoint import CheckpointManager
 
 
@@ -27,6 +28,7 @@ class QueueProvider:
     def __init__(self, replies: list[str]) -> None:
         self.replies = replies
         self.calls = 0
+        self.usage = Usage()
 
     async def generate(self, messages: list[Message], model: str, **opts: object) -> str:
         self.calls += 1
@@ -35,6 +37,7 @@ class QueueProvider:
 
 class BoomProvider:
     name = "boom"
+    usage = Usage()
 
     async def generate(self, messages: list[Message], model: str, **opts: object) -> str:
         raise AssertionError("provider should not be called")

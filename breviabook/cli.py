@@ -273,7 +273,7 @@ def condense(
         f"(provider={provider}, model={resolved_model}, ratio={resolved_ratio:.2f})"
     )
 
-    usage_source = getattr(llm, "usage", None)
+    usage_source = llm.usage
     reporter = (
         RunReporter(console, usage_source=usage_source)
         if console.is_terminal
@@ -403,7 +403,7 @@ def translate(
         f"(provider={provider}, model={resolved_model}) → {', '.join(fmts)}"
     )
 
-    usage_source = getattr(llm, "usage", None)
+    usage_source = llm.usage
     reporter = (
         RunReporter(console, usage_source=usage_source)
         if console.is_terminal

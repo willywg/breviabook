@@ -7,6 +7,7 @@ import json
 import pytest
 
 from breviabook.llm.base import Message
+from breviabook.llm.usage import Usage
 from breviabook.parsers.pdf_parser import TocEntry
 from breviabook.parsers.toc_inference import build_toc_messages, infer_toc
 
@@ -17,6 +18,7 @@ class ScriptedProvider:
     def __init__(self, reply: str) -> None:
         self.reply = reply
         self.calls = 0
+        self.usage = Usage()
 
     async def generate(self, messages: list[Message], model: str, **opts: object) -> str:
         self.calls += 1

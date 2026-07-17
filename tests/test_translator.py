@@ -21,6 +21,7 @@ from breviabook.ir.models import (
     TableBlock,
 )
 from breviabook.llm.base import Message
+from breviabook.llm.usage import Usage
 from breviabook.persistence.checkpoint import CheckpointManager
 from breviabook.translate.glossary import Glossary
 from breviabook.translate.translator import (
@@ -39,6 +40,7 @@ class ScriptedProvider:
         self.reply = reply
         self.last_prompt = ""
         self.calls = 0
+        self.usage = Usage()
 
     async def generate(self, messages: list[Message], model: str, **opts: object) -> str:
         self.calls += 1
@@ -139,6 +141,7 @@ class BatchCountingProvider:
 
     def __init__(self) -> None:
         self.batch_sizes: list[int] = []
+        self.usage = Usage()
 
     async def generate(self, messages: list[Message], model: str, **opts: object) -> str:
         content = messages[-1]["content"]
@@ -182,6 +185,7 @@ class CountingProvider:
     def __init__(self, prefix: str = "ES") -> None:
         self.prefix = prefix
         self.calls = 0
+        self.usage = Usage()
 
     async def generate(self, messages: list[Message], model: str, **opts: object) -> str:
         self.calls += 1
@@ -284,6 +288,7 @@ class PartialProvider:
 
     def __init__(self) -> None:
         self.calls = 0
+        self.usage = Usage()
 
     async def generate(self, messages: list[Message], model: str, **opts: object) -> str:
         self.calls += 1
@@ -458,6 +463,7 @@ class TagEchoProvider:
 
     def __init__(self) -> None:
         self.calls = 0
+        self.usage = Usage()
 
     async def generate(self, messages: list[Message], model: str, **opts: object) -> str:
         import re
@@ -482,6 +488,7 @@ class TagManglingProvider:
 
     def __init__(self) -> None:
         self.calls = 0
+        self.usage = Usage()
 
     async def generate(self, messages: list[Message], model: str, **opts: object) -> str:
         import re
@@ -534,6 +541,7 @@ class PoisonBatchProvider:
     def __init__(self, poison_text: str) -> None:
         self.poison_text = poison_text
         self.calls = 0
+        self.usage = Usage()
 
     async def generate(self, messages: list[Message], model: str, **opts: object) -> str:
         import re

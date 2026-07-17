@@ -323,7 +323,6 @@ async def condense_book(
         state, formats=fmts, out_dir=out_dir, reporter=reporter
     )
 
-    usage = getattr(provider, "usage", None)
     return CondenseResult(
         output_files=output_files,
         input_tokens=state.input_tokens,
@@ -331,7 +330,7 @@ async def condense_book(
         warnings=state.warnings,
         chunks_total=state.chunks_total,
         chunks_reused=state.chunks_reused,
-        usage=usage if isinstance(usage, Usage) else None,
+        usage=provider.usage,
         translate_only=state.translate_only,
         batches_reused=state.batches_reused,
         chapters_reused=state.chapters_reused,

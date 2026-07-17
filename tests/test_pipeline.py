@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from breviabook.llm.base import Message
+from breviabook.llm.usage import Usage
 from breviabook.parsers.epub_parser import EpubParser
 from breviabook.persistence.checkpoint import CheckpointManager
 from breviabook.pipeline import (
@@ -26,6 +27,7 @@ class ScriptedProvider:
     def __init__(self, reply: str) -> None:
         self.reply = reply
         self.calls = 0
+        self.usage = Usage()
 
     async def generate(self, messages: list[Message], model: str, **opts: object) -> str:
         self.calls += 1
@@ -81,6 +83,7 @@ class PhaseAwareProvider:
 
     def __init__(self) -> None:
         self.condense_calls = 0
+        self.usage = Usage()
 
     async def generate(self, messages: list[Message], model: str, **opts: object) -> str:
         if messages[-1]["content"].startswith("Condense the following book excerpt"):
@@ -204,6 +207,7 @@ class RoutingProvider:
     """Returns a translate reply for translate prompts, else a condense/synth reply."""
 
     name = "routing"
+    usage = Usage()
 
     async def generate(self, messages: list[Message], model: str, **opts: object) -> str:
         content = messages[-1]["content"]
@@ -305,6 +309,7 @@ class TranslateOnlyProvider:
 
     def __init__(self) -> None:
         self.calls = 0
+        self.usage = Usage()
 
     async def generate(self, messages: list[Message], model: str, **opts: object) -> str:
         self.calls += 1
@@ -409,6 +414,7 @@ async def test_translate_only_untranslated_warning(tmp_path: Path) -> None:
     # A provider that fails to parse on the first batch triggers untranslated warning.
     class FailingProvider:
         name = "failing"
+        usage = Usage()
 
         async def generate(self, messages: list[Message], model: str, **opts: object) -> str:
             return "not json"
@@ -451,6 +457,7 @@ class AllPhaseProvider:
         self.synth_calls = 0
         self.translate_calls = 0
         self.vision_calls = 0
+        self.usage = Usage()
 
     async def generate(self, messages: list[Message], model: str, **opts: object) -> str:
         content = messages[-1]["content"]

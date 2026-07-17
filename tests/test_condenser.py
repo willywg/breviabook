@@ -24,6 +24,7 @@ from breviabook.ir.models import (
     ParagraphBlock,
 )
 from breviabook.llm.base import Message
+from breviabook.llm.usage import Usage
 from breviabook.persistence.checkpoint import CheckpointManager
 
 
@@ -35,6 +36,7 @@ class ScriptedProvider:
     def __init__(self, reply: str) -> None:
         self.reply = reply
         self.calls = 0
+        self.usage = Usage()
 
     async def generate(self, messages: list[Message], model: str, **opts: object) -> str:
         self.calls += 1
@@ -45,6 +47,7 @@ class BoomProvider:
     """Fails if ever called — proves a code path makes no LLM call."""
 
     name = "boom"
+    usage = Usage()
 
     async def generate(self, messages: list[Message], model: str, **opts: object) -> str:
         raise AssertionError("provider should not be called")
@@ -139,6 +142,7 @@ class FlakyProvider:
         self.bad = bad
         self.good_reply = good_reply
         self.calls = 0
+        self.usage = Usage()
 
     async def generate(self, messages: list[Message], model: str, **opts: object) -> str:
         self.calls += 1

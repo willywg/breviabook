@@ -7,6 +7,7 @@ call a real model (ROADMAP §11). It satisfies the ``LLMProvider`` Protocol stru
 from __future__ import annotations
 
 from breviabook.llm.base import Message
+from breviabook.llm.usage import Usage
 
 
 class MockProvider:
@@ -17,6 +18,7 @@ class MockProvider:
     def __init__(self, reply: str = "MOCK_OK") -> None:
         self.reply = reply
         self.calls: list[tuple[list[Message], str]] = []
+        self.usage = Usage()
 
     async def generate(self, messages: list[Message], model: str, **opts: object) -> str:
         self.calls.append((messages, model))

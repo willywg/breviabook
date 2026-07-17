@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from typing import Protocol, TypedDict, runtime_checkable
 
+from breviabook.llm.usage import Usage
+
 
 class Message(TypedDict):
     """A single chat message in the OpenAI-style ``{"role", "content"}`` shape."""
@@ -21,11 +23,13 @@ class Message(TypedDict):
 class LLMProvider(Protocol):
     """Async chat-completion provider.
 
-    Implementations live in ``breviabook/llm/providers/``. ``generate_with_image`` is optional
+    Implementations live in ``breviabook/llm/providers/``. Every provider exposes a live
+    :class:`~breviabook.llm.usage.Usage` accumulator. ``generate_with_image`` is optional
     and only used by the Phase 11 vision ranker; text-only providers may omit it.
     """
 
     name: str
+    usage: Usage
 
     async def generate(
         self,
