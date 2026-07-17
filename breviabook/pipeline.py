@@ -212,6 +212,27 @@ def estimate_condense(
     )
 
 
+@dataclass
+class _RunState:
+    """Mutable mid-pipeline state shared across private path helpers.
+
+    Private to this module — not part of the public API. Counters and warnings mirror
+    the locals that used to live inside the monolithic ``condense_book`` body.
+    """
+
+    working_doc: Document
+    stem: str
+    input_tokens: int
+    run_checkpoint: CheckpointManager | None = None
+    warnings: list[str] = field(default_factory=list)
+    chunks_total: int = 0
+    chunks_reused: int = 0
+    chapters_reused: int = 0
+    batches_reused: int = 0
+    images_reused: int = 0
+    translate_only: bool = False
+
+
 async def condense_book(
     *,
     input_path: Path,
@@ -245,14 +266,6 @@ async def condense_book(
         reporter = LogReporter(log) if log is not _noop else NullReporter()
     fmts = validate_formats(formats)
     out_dir.mkdir(parents=True, exist_ok=True)
-    warnings: list[str] = []
-    batches_reused = 0
-    chunks_total = 0
-    chunks_reused_val = 0
-    chapters_reused_val = 0
-    images_reused_val = 0
-    run_checkpoint: CheckpointManager | None = None
-    stem_condensed = f"{input_path.stem}-condensed"
 
     reporter.phase("Parse", total=1)
     doc = await _parse_input(
@@ -263,26 +276,202 @@ async def condense_book(
     reporter.note(f"{len(doc.chapters)} chapters · ~{input_tokens:,} tokens")
 
     if translate_only:
-        if not translate_to:
-            raise ValueError("translate_only requires translate_to")
-        stem = f"{input_path.stem}-{translate_to.lower().replace(' ', '-')}"
-        reporter.phase("Translate", total=len(doc.chapters))
+        state = await _run_translate_only(
+            doc,
+            input_tokens=input_tokens,
+            input_path=input_path,
+            out_dir=out_dir,
+            provider=provider,
+            model=model,
+            resume=resume,
+            checkpoint_path=checkpoint_path,
+            translate_to=translate_to,
+            source_lang=source_lang,
+            glossary=glossary,
+            concurrency=concurrency,
+            reporter=reporter,
+        )
+    else:
+        state = await _run_condense(
+            doc,
+            input_tokens=input_tokens,
+            input_path=input_path,
+            out_dir=out_dir,
+            provider=provider,
+            model=model,
+            target_ratio=target_ratio,
+            chunk_tokens=chunk_tokens,
+            resume=resume,
+            checkpoint_path=checkpoint_path,
+            translate_to=translate_to,
+            source_lang=source_lang,
+            glossary=glossary,
+            concurrency=concurrency,
+            reporter=reporter,
+        )
 
-        tr_checkpoint_path = checkpoint_path or (out_dir / ".breviabook" / f"{stem}.jsonl")
-        tr_checkpoint = CheckpointManager(tr_checkpoint_path)
-        run_checkpoint = tr_checkpoint
-        if not resume:
-            tr_checkpoint.clear()
+    await _maybe_rank_images(
+        state,
+        provider=provider,
+        model=model,
+        rank_images=rank_images,
+        concurrency=concurrency,
+        reporter=reporter,
+    )
+    # final_doc is post-ImageSelector; output_tokens must use that same document.
+    output_files, final_doc = _select_and_render(
+        state, formats=fmts, out_dir=out_dir, reporter=reporter
+    )
+
+    usage = getattr(provider, "usage", None)
+    return CondenseResult(
+        output_files=output_files,
+        input_tokens=state.input_tokens,
+        output_tokens=_document_tokens(final_doc),
+        warnings=state.warnings,
+        chunks_total=state.chunks_total,
+        chunks_reused=state.chunks_reused,
+        usage=usage if isinstance(usage, Usage) else None,
+        translate_only=state.translate_only,
+        batches_reused=state.batches_reused,
+        chapters_reused=state.chapters_reused,
+        images_reused=state.images_reused,
+    )
+
+
+async def _run_translate_only(
+    doc: Document,
+    *,
+    input_tokens: int,
+    input_path: Path,
+    out_dir: Path,
+    provider: LLMProvider,
+    model: str,
+    resume: bool,
+    checkpoint_path: Path | None,
+    translate_to: str | None,
+    source_lang: str | None,
+    glossary: Glossary | None,
+    concurrency: int,
+    reporter: ProgressReporter,
+) -> _RunState:
+    """Translate-only path: parse → translate → (caller runs vision/select/render)."""
+    if not translate_to:
+        raise ValueError("translate_only requires translate_to")
+    stem = f"{input_path.stem}-{translate_to.lower().replace(' ', '-')}"
+    reporter.phase("Translate", total=len(doc.chapters))
+
+    tr_checkpoint_path = checkpoint_path or (out_dir / ".breviabook" / f"{stem}.jsonl")
+    tr_checkpoint = CheckpointManager(tr_checkpoint_path)
+    if not resume:
+        tr_checkpoint.clear()
+    translator = Translator(
+        provider,
+        model,
+        translate_to,
+        source_lang=source_lang,
+        glossary=glossary,
+        checkpoint=tr_checkpoint,
+    )
+    working_doc = await translator.translate_document(
+        doc, concurrency=concurrency, on_progress=lambda _ch: reporter.advance()
+    )
+    warnings: list[str] = []
+    if translator.untranslated_units:
+        warnings.append(
+            f"{translator.untranslated_units} segments left untranslated "
+            "(model response unparseable after retries)"
+        )
+    return _RunState(
+        working_doc=working_doc,
+        stem=stem,
+        input_tokens=input_tokens,
+        run_checkpoint=tr_checkpoint,
+        warnings=warnings,
+        batches_reused=translator.reused_batches,
+        translate_only=True,
+    )
+
+
+async def _run_condense(
+    doc: Document,
+    *,
+    input_tokens: int,
+    input_path: Path,
+    out_dir: Path,
+    provider: LLMProvider,
+    model: str,
+    target_ratio: float,
+    chunk_tokens: int,
+    resume: bool,
+    checkpoint_path: Path | None,
+    translate_to: str | None,
+    source_lang: str | None,
+    glossary: Glossary | None,
+    concurrency: int,
+    reporter: ProgressReporter,
+) -> _RunState:
+    """Condense path: chunk → condense → synthesize → optional translate-after-condense."""
+    stem = f"{input_path.stem}-condensed"
+    chunks = Chunker(chunk_tokens).chunk(doc)
+    chunks_total = len(chunks)
+    reporter.note(f"{chunks_total} chunks")
+
+    resolved_checkpoint_path = checkpoint_path or (out_dir / ".breviabook" / f"{stem}.jsonl")
+    checkpoint = CheckpointManager(resolved_checkpoint_path)
+    if not resume:
+        checkpoint.clear()
+
+    warnings: list[str] = []
+
+    reporter.phase("Condense", total=chunks_total)
+    condenser = Condenser(provider, model, target_ratio)
+    condensed = await condenser.condense(
+        chunks,
+        concurrency=concurrency,
+        checkpoint=checkpoint,
+        on_progress=lambda _cc: reporter.advance(),
+    )
+    warnings.extend(
+        f"chunk {cc.id}: condensed output longer than input"
+        for cc in condensed
+        if cc.output_longer_than_input
+    )
+    warnings.extend(
+        f"chunk {cc.id}: condense failed after retries; kept original text"
+        for cc in condensed
+        if cc.condense_failed
+    )
+
+    n_chapters = len({cc.chapter_index for cc in condensed})
+    reporter.phase("Synthesize", total=n_chapters)
+    synthesizer = Synthesizer(provider, model, target_ratio)
+    chapters = await synthesizer.synthesize(
+        condensed,
+        concurrency=concurrency,
+        checkpoint=checkpoint,
+        on_progress=lambda _ch: reporter.advance(),
+    )
+    warnings.extend(
+        f"chapter {ch.chapter_index}: synthesis failed after retries; kept condensed text"
+        for ch in chapters
+        if ch.synthesis_failed
+    )
+    working_doc = synthesized_to_document(doc, chapters)
+
+    batches_reused = 0
+    if translate_to:
+        reporter.phase("Translate", total=len(working_doc.chapters))
         translator = Translator(
             provider,
             model,
             translate_to,
             source_lang=source_lang,
             glossary=glossary,
-            checkpoint=tr_checkpoint,
+            checkpoint=checkpoint,
         )
         working_doc = await translator.translate_document(
-            doc, concurrency=concurrency, on_progress=lambda _ch: reporter.advance()
+            working_doc, concurrency=concurrency, on_progress=lambda _ch: reporter.advance()
         )
         batches_reused = translator.reused_batches
         if translator.untranslated_units:
@@ -290,119 +479,76 @@ async def condense_book(
                 f"{translator.untranslated_units} segments left untranslated "
                 "(model response unparseable after retries)"
             )
-    else:
-        stem = stem_condensed
-        chunks = Chunker(chunk_tokens).chunk(doc)
-        chunks_total = len(chunks)
-        reporter.note(f"{chunks_total} chunks")
 
-        checkpoint_path = checkpoint_path or (out_dir / ".breviabook" / f"{stem}.jsonl")
-        checkpoint = CheckpointManager(checkpoint_path)
-        run_checkpoint = checkpoint
-        if not resume:
-            checkpoint.clear()
+    return _RunState(
+        working_doc=working_doc,
+        stem=stem,
+        input_tokens=input_tokens,
+        run_checkpoint=checkpoint,
+        warnings=warnings,
+        chunks_total=chunks_total,
+        chunks_reused=condenser.reused_chunks,
+        chapters_reused=synthesizer.reused_chapters,
+        batches_reused=batches_reused,
+        translate_only=False,
+    )
 
-        reporter.phase("Condense", total=chunks_total)
-        condenser = Condenser(provider, model, target_ratio)
-        condensed = await condenser.condense(
-            chunks,
-            concurrency=concurrency,
-            checkpoint=checkpoint,
-            on_progress=lambda _cc: reporter.advance(),
-        )
-        chunks_reused_val = condenser.reused_chunks
-        warnings.extend(
-            f"chunk {cc.id}: condensed output longer than input"
-            for cc in condensed
-            if cc.output_longer_than_input
-        )
-        warnings.extend(
-            f"chunk {cc.id}: condense failed after retries; kept original text"
-            for cc in condensed
-            if cc.condense_failed
-        )
 
-        n_chapters = len({cc.chapter_index for cc in condensed})
-        reporter.phase("Synthesize", total=n_chapters)
-        synthesizer = Synthesizer(provider, model, target_ratio)
-        chapters = await synthesizer.synthesize(
-            condensed,
-            concurrency=concurrency,
-            checkpoint=checkpoint,
-            on_progress=lambda _ch: reporter.advance(),
+async def _maybe_rank_images(
+    state: _RunState,
+    *,
+    provider: LLMProvider,
+    model: str,
+    rank_images: bool,
+    concurrency: int,
+    reporter: ProgressReporter,
+) -> None:
+    """Optional vision ranking; mutates ``state.working_doc`` and ``state.images_reused``."""
+    if not (rank_images and state.working_doc.images):
+        return
+    if not isinstance(provider, VisionProvider):
+        raise ValueError(
+            "--rank-images needs a vision-capable provider/model (e.g. gemini); "
+            f"{getattr(provider, 'name', 'provider')!r} does not support images."
         )
-        chapters_reused_val = synthesizer.reused_chapters
-        warnings.extend(
-            f"chapter {ch.chapter_index}: synthesis failed after retries; kept condensed text"
-            for ch in chapters
-            if ch.synthesis_failed
-        )
-        working_doc = synthesized_to_document(doc, chapters)
+    vision_ranker = VisionRanker(provider, model)
+    reporter.phase("Rank images", total=vision_ranker.rankable_count(state.working_doc))
+    state.working_doc = await vision_ranker.rank(
+        state.working_doc,
+        concurrency=concurrency,
+        checkpoint=state.run_checkpoint,
+        on_progress=lambda _verdict: reporter.advance(),
+    )
+    state.images_reused = vision_ranker.reused_images
 
-        if translate_to:
-            reporter.phase("Translate", total=len(working_doc.chapters))
-            translator = Translator(
-                provider,
-                model,
-                translate_to,
-                source_lang=source_lang,
-                glossary=glossary,
-                checkpoint=checkpoint,
-            )
-            working_doc = await translator.translate_document(
-                working_doc, concurrency=concurrency, on_progress=lambda _ch: reporter.advance()
-            )
-            batches_reused = translator.reused_batches
-            if translator.untranslated_units:
-                warnings.append(
-                    f"{translator.untranslated_units} segments left untranslated "
-                    "(model response unparseable after retries)"
-                )
 
-    if rank_images and working_doc.images:
-        if not isinstance(provider, VisionProvider):
-            raise ValueError(
-                "--rank-images needs a vision-capable provider/model (e.g. gemini); "
-                f"{getattr(provider, 'name', 'provider')!r} does not support images."
-            )
-        vision_ranker = VisionRanker(provider, model)
-        reporter.phase("Rank images", total=vision_ranker.rankable_count(working_doc))
-        working_doc = await vision_ranker.rank(
-            working_doc,
-            concurrency=concurrency,
-            checkpoint=run_checkpoint,
-            on_progress=lambda _verdict: reporter.advance(),
-        )
-        images_reused_val = vision_ranker.reused_images
+def _select_and_render(
+    state: _RunState,
+    *,
+    formats: list[str],
+    out_dir: Path,
+    reporter: ProgressReporter,
+) -> tuple[list[Path], Document]:
+    """Image-select then render. Returns ``(output_files, final_doc)`` post-selection.
 
-    selected = ImageSelector().select(working_doc)
+    ``final_doc`` is the document after :class:`ImageSelector` — the same object used for
+    rendering *and* for ``output_tokens`` in the orchestrator. Do not substitute
+    ``state.working_doc`` (pre-selection) when computing token counts.
+    """
+    selected = ImageSelector().select(state.working_doc)
     final_doc = selected.document
 
-    reporter.phase("Render", total=len(fmts))
+    reporter.phase("Render", total=len(formats))
     output_files: list[Path] = []
-    for fmt in fmts:
+    for fmt in formats:
         try:
-            output_files.append(_render(fmt, final_doc, out_dir, stem))
+            output_files.append(_render(fmt, final_doc, out_dir, state.stem))
         except RuntimeError as exc:
             # e.g. PDF requested but weasyprint's system libs are missing: skip this format
             # and keep the others rather than discarding the whole (already paid-for) run.
-            warnings.append(f"{fmt}: skipped — {exc}")
+            state.warnings.append(f"{fmt}: skipped — {exc}")
         reporter.advance()
-
-    usage = getattr(provider, "usage", None)
-    return CondenseResult(
-        output_files=output_files,
-        input_tokens=input_tokens,
-        output_tokens=_document_tokens(final_doc),
-        warnings=warnings,
-        chunks_total=chunks_total,
-        chunks_reused=chunks_reused_val,
-        usage=usage if isinstance(usage, Usage) else None,
-        translate_only=translate_only,
-        batches_reused=batches_reused,
-        chapters_reused=chapters_reused_val,
-        images_reused=images_reused_val,
-    )
+    return output_files, final_doc
 
 
 def _render(fmt: str, doc: Document, out_dir: Path, stem: str) -> Path:
