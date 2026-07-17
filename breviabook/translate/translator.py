@@ -200,7 +200,7 @@ class Translator:
             cp = self.checkpoint
             key = f"tr:{chapter_index}:{start}"
             source_hash = _batch_fingerprint(
-                batch, self.target_lang, self.source_lang, self.glossary
+                batch, self.model, self.target_lang, self.source_lang, self.glossary
             )
             if cp is not None:
                 cached = self._cached_batch(cp, key, source_hash, batch)
@@ -287,17 +287,19 @@ class Translator:
 
 def _batch_fingerprint(
     batch: dict[str, str],
+    model: str,
     target_lang: str,
     source_lang: str | None,
     glossary: Glossary | None,
 ) -> str:
-    """SHA-1 over target language, source language, glossary prompt, and batch content.
+    """SHA-1 over model, target language, source language, glossary prompt, and batch content.
 
-    This guarantees that switching target language or editing the glossary invalidates
-    cached translations — a stale checkpoint from ``--to Spanish`` is never reused for
-    ``--to French``.
+    This guarantees that switching model or target language, or editing the glossary,
+    invalidates cached translations — a stale checkpoint from ``--to Spanish`` is never
+    reused for ``--to French``, nor one from another model.
     """
     fp = Fingerprint()
+    fp.field(model)
     fp.field(target_lang)
     fp.field(source_lang or "")
     fp.field(glossary.prompt_block() if glossary and glossary.terms else "")

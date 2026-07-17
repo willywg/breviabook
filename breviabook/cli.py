@@ -152,6 +152,12 @@ def _print_result_table(result: CondenseResult) -> None:
         table.add_row("compression", f"{(1 - ratio) * 100:.0f}% smaller (ratio {ratio:.2f})")
         if result.chunks_reused:
             table.add_row("chunks reused", f"{result.chunks_reused}/{result.chunks_total}")
+        if result.chapters_reused:
+            table.add_row("chapters reused", str(result.chapters_reused))
+        if result.batches_reused:
+            table.add_row("batches reused", str(result.batches_reused))
+        if result.images_reused:
+            table.add_row("images reused", str(result.images_reused))
     console.print(table)
 
 

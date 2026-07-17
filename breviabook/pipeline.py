@@ -74,6 +74,8 @@ class CondenseResult:
     usage: Usage | None = None
     translate_only: bool = False
     batches_reused: int = 0
+    chapters_reused: int = 0
+    images_reused: int = 0
 
 
 @dataclass
@@ -243,6 +245,9 @@ async def condense_book(
     batches_reused = 0
     chunks_total = 0
     chunks_reused_val = 0
+    chapters_reused_val = 0
+    images_reused_val = 0
+    run_checkpoint: CheckpointManager | None = None
     stem_condensed = f"{input_path.stem}-condensed"
 
     reporter.phase("Parse", total=1)
@@ -261,6 +266,7 @@ async def condense_book(
 
         tr_checkpoint_path = checkpoint_path or (out_dir / ".breviabook" / f"{stem}.jsonl")
         tr_checkpoint = CheckpointManager(tr_checkpoint_path)
+        run_checkpoint = tr_checkpoint
         if not resume:
             tr_checkpoint.clear()
         translator = Translator(
@@ -288,6 +294,7 @@ async def condense_book(
 
         checkpoint_path = checkpoint_path or (out_dir / ".breviabook" / f"{stem}.jsonl")
         checkpoint = CheckpointManager(checkpoint_path)
+        run_checkpoint = checkpoint
         if not resume:
             checkpoint.clear()
 
@@ -310,19 +317,32 @@ async def condense_book(
 
         n_chapters = len({cc.chapter_index for cc in condensed})
         reporter.phase("Synthesize", total=n_chapters)
-        chapters = await Synthesizer(provider, model, target_ratio).synthesize(
-            condensed, on_progress=lambda _ch: reporter.advance()
+        synthesizer = Synthesizer(provider, model, target_ratio)
+        chapters = await synthesizer.synthesize(
+            condensed, checkpoint=checkpoint, on_progress=lambda _ch: reporter.advance()
+        )
+        chapters_reused_val = synthesizer.reused_chapters
+        warnings.extend(
+            f"chapter {ch.chapter_index}: synthesis failed after retries; kept condensed text"
+            for ch in chapters
+            if ch.synthesis_failed
         )
         working_doc = synthesized_to_document(doc, chapters)
 
         if translate_to:
             reporter.phase("Translate", total=len(working_doc.chapters))
             translator = Translator(
-                provider, model, translate_to, source_lang=source_lang, glossary=glossary
+                provider,
+                model,
+                translate_to,
+                source_lang=source_lang,
+                glossary=glossary,
+                checkpoint=checkpoint,
             )
             working_doc = await translator.translate_document(
                 working_doc, on_progress=lambda _ch: reporter.advance()
             )
+            batches_reused = translator.reused_batches
             if translator.untranslated_units:
                 warnings.append(
                     f"{translator.untranslated_units} segments left untranslated "
@@ -336,7 +356,9 @@ async def condense_book(
                 f"{getattr(provider, 'name', 'provider')!r} does not support images."
             )
         reporter.phase("Rank images", total=1)
-        working_doc = await VisionRanker(provider, model).rank(working_doc)
+        vision_ranker = VisionRanker(provider, model)
+        working_doc = await vision_ranker.rank(working_doc, checkpoint=run_checkpoint)
+        images_reused_val = vision_ranker.reused_images
         reporter.advance()
 
     selected = ImageSelector().select(working_doc)
@@ -364,6 +386,8 @@ async def condense_book(
         usage=usage if isinstance(usage, Usage) else None,
         translate_only=translate_only,
         batches_reused=batches_reused,
+        chapters_reused=chapters_reused_val,
+        images_reused=images_reused_val,
     )
 
 

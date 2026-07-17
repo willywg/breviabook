@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
 
 from breviabook.images.vision_ranker import VisionRanker, build_vision_prompt
@@ -15,6 +16,7 @@ from breviabook.ir.models import (
     ParagraphBlock,
 )
 from breviabook.llm.base import Message
+from breviabook.persistence.checkpoint import CheckpointManager
 
 
 class FakeVisionProvider:
@@ -99,3 +101,91 @@ async def test_parse_failure_keeps_image() -> None:
     doc = _doc_with_images("img")
     out = await VisionRanker(BrokenProvider({}), "m").rank(doc)
     assert set(out.images) == {"img"}  # safe default: keep on parse failure
+
+
+# --- Checkpoint / fingerprint matrix (feat--checkpoint-remaining-phases) --------------- #
+
+
+class _RaisingProvider(FakeVisionProvider):
+    async def generate_with_image(self, prompt, images, model, **opts):  # type: ignore[no-untyped-def]
+        raise AssertionError("vision provider should not be called on reuse")
+
+
+def _doc_with_bytes(iid: str, marker: str) -> Document:
+    # Same image id, caller-chosen bytes (marker changes the sha256 the fingerprint hashes).
+    data = f"{marker}|{iid}".encode()
+    return Document(
+        metadata=DocumentMetadata(title="T", source_format="epub"),
+        images={iid: ImageAsset(image_id=iid, data=data, mime="image/png")},
+        chapters=[
+            Chapter(
+                title="C",
+                blocks=[ParagraphBlock(text="ctx"), ImageBlock(image_id=iid, caption="cap")],
+            )
+        ],
+    )
+
+
+async def test_resume_reuses_verdict(tmp_path: Path) -> None:
+    cp_path = tmp_path / "run.jsonl"
+    doc = _doc_with_images("keep")
+    first = FakeVisionProvider({"keep": 0.9})
+    await VisionRanker(first, "m").rank(doc, checkpoint=CheckpointManager(cp_path))
+    assert first.image_calls == 1
+
+    resumed = VisionRanker(_RaisingProvider({"keep": 0.9}), "m")
+    out = await resumed.rank(_doc_with_images("keep"), checkpoint=CheckpointManager(cp_path))
+    assert resumed.reused_images == 1
+    assert set(out.images) == {"keep"}
+
+
+async def test_resume_reranks_on_model_change(tmp_path: Path) -> None:
+    cp_path = tmp_path / "run.jsonl"
+    await VisionRanker(FakeVisionProvider({"keep": 0.9}), "model-a").rank(
+        _doc_with_images("keep"), checkpoint=CheckpointManager(cp_path)
+    )
+    other = FakeVisionProvider({"keep": 0.9})
+    r = VisionRanker(other, "model-b")
+    await r.rank(_doc_with_images("keep"), checkpoint=CheckpointManager(cp_path))
+    assert other.image_calls == 1  # different model → re-rank
+    assert r.reused_images == 0
+
+
+async def test_resume_reranks_on_image_bytes_change(tmp_path: Path) -> None:
+    cp_path = tmp_path / "run.jsonl"
+    await VisionRanker(FakeVisionProvider({"img": 0.9}), "m").rank(
+        _doc_with_bytes("img", "x"), checkpoint=CheckpointManager(cp_path)
+    )
+    other = FakeVisionProvider({"img": 0.9})
+    r = VisionRanker(other, "m")
+    # Same image id, different bytes → the sha256 in the fingerprint differs → re-rank.
+    await r.rank(_doc_with_bytes("img", "y"), checkpoint=CheckpointManager(cp_path))
+    assert other.image_calls == 1
+    assert r.reused_images == 0
+
+
+async def test_parse_failure_verdict_not_cached_and_retried(tmp_path: Path) -> None:
+    cp_path = tmp_path / "run.jsonl"
+
+    class BrokenProvider(FakeVisionProvider):
+        async def generate_with_image(self, prompt, images, model, **opts):  # type: ignore[no-untyped-def]
+            return "not json"
+
+    await VisionRanker(BrokenProvider({}), "m").rank(
+        _doc_with_images("img"), checkpoint=CheckpointManager(cp_path)
+    )
+    assert not CheckpointManager(cp_path).is_done("img:img")  # unparsed verdict not cached
+
+    good = FakeVisionProvider({"img": 0.9})
+    retried = VisionRanker(good, "m")
+    await retried.rank(_doc_with_images("img"), checkpoint=CheckpointManager(cp_path))
+    assert good.image_calls == 1  # retried on resume
+    assert retried.reused_images == 0
+
+
+async def test_vision_checkpoint_key_is_namespaced(tmp_path: Path) -> None:
+    cp_path = tmp_path / "run.jsonl"
+    await VisionRanker(FakeVisionProvider({"keep": 0.9}), "m").rank(
+        _doc_with_images("keep"), checkpoint=CheckpointManager(cp_path)
+    )
+    assert set(CheckpointManager(cp_path).results()) == {"img:keep"}

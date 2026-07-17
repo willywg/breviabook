@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from breviabook.condense.condenser import CondensedChunk
 from breviabook.condense.synthesizer import Synthesizer, synthesized_to_document
@@ -15,6 +16,7 @@ from breviabook.ir.models import (
     ParagraphBlock,
 )
 from breviabook.llm.base import Message
+from breviabook.persistence.checkpoint import CheckpointManager
 
 
 class QueueProvider:
@@ -173,3 +175,104 @@ async def test_separate_chapters_stay_separate() -> None:
     chapters = await Synthesizer(BoomProvider(), "m").synthesize(chunks)  # both small -> skip
     assert [c.title for c in chapters] == ["One", "Two"]
     assert [c.chapter_index for c in chapters] == [0, 1]
+
+
+# --- Checkpoint / fingerprint matrix (feat--checkpoint-remaining-phases) --------------- #
+
+
+def _two_chunk_chapter() -> list[CondensedChunk]:
+    # Two chunks force a smoothing call (a single small chunk skips synthesis entirely).
+    return [
+        _cc([ParagraphBlock(text="intro a")], input_tokens=40),
+        _cc([ParagraphBlock(text="outro b")], input_tokens=40),
+    ]
+
+
+async def test_resume_reuses_synthesized_chapter(tmp_path: Path) -> None:
+    cp_path = tmp_path / "run.jsonl"
+    reply = _texts("smoothed intro", "smoothed outro")
+
+    first = QueueProvider([reply])
+    out1 = await Synthesizer(first, "m").synthesize(
+        _two_chunk_chapter(), checkpoint=CheckpointManager(cp_path)
+    )
+    assert first.calls == 1
+
+    # Resume with a provider that raises if touched: the chapter must come from the checkpoint.
+    resumed = Synthesizer(BoomProvider(), "m")
+    out2 = await resumed.synthesize(_two_chunk_chapter(), checkpoint=CheckpointManager(cp_path))
+    assert resumed.reused_chapters == 1
+    assert [b.text for b in out2[0].blocks] == [b.text for b in out1[0].blocks]  # type: ignore[union-attr]
+
+
+async def test_resume_recomputes_on_model_change(tmp_path: Path) -> None:
+    cp_path = tmp_path / "run.jsonl"
+    reply = _texts("smoothed intro", "smoothed outro")
+    await Synthesizer(QueueProvider([reply]), "model-a").synthesize(
+        _two_chunk_chapter(), checkpoint=CheckpointManager(cp_path)
+    )
+
+    other = QueueProvider([reply])
+    ranker = Synthesizer(other, "model-b")
+    await ranker.synthesize(_two_chunk_chapter(), checkpoint=CheckpointManager(cp_path))
+    assert other.calls == 1  # different model → fingerprint miss → recomputed
+    assert ranker.reused_chapters == 0
+
+
+async def test_resume_recomputes_on_ratio_change(tmp_path: Path) -> None:
+    cp_path = tmp_path / "run.jsonl"
+    reply = _texts("smoothed intro", "smoothed outro")
+    await Synthesizer(QueueProvider([reply]), "m", target_ratio=0.30).synthesize(
+        _two_chunk_chapter(), checkpoint=CheckpointManager(cp_path)
+    )
+
+    other = QueueProvider([reply])
+    s = Synthesizer(other, "m", target_ratio=0.50)
+    await s.synthesize(_two_chunk_chapter(), checkpoint=CheckpointManager(cp_path))
+    assert other.calls == 1
+    assert s.reused_chapters == 0
+
+
+async def test_failed_synthesis_is_not_cached_and_retried(tmp_path: Path) -> None:
+    cp_path = tmp_path / "run.jsonl"
+    # Smooth pass keeps returning malformed JSON → synthesis_failed, must not be recorded.
+    out1 = await Synthesizer(QueueProvider(["not json"]), "m", max_retries=1).synthesize(
+        _two_chunk_chapter(), checkpoint=CheckpointManager(cp_path)
+    )
+    assert out1[0].synthesis_failed is True
+    assert not CheckpointManager(cp_path).is_done("syn:0")  # failure not cached
+
+    # Resume retries and can now succeed.
+    good = QueueProvider([_texts("smoothed intro", "smoothed outro")])
+    retried = Synthesizer(good, "m")
+    out2 = await retried.synthesize(_two_chunk_chapter(), checkpoint=CheckpointManager(cp_path))
+    assert good.calls == 1
+    assert retried.reused_chapters == 0
+    assert out2[0].synthesis_failed is False
+
+
+async def test_corrupt_synthesis_payload_is_recomputed(tmp_path: Path) -> None:
+    cp_path = tmp_path / "run.jsonl"
+    reply = _texts("smoothed intro", "smoothed outro")
+    # Prime a real record, then corrupt its inner "chapter" payload while keeping the hash.
+    await Synthesizer(QueueProvider([reply]), "m").synthesize(
+        _two_chunk_chapter(), checkpoint=CheckpointManager(cp_path)
+    )
+    cp = CheckpointManager(cp_path)
+    good_hash = cp.get("syn:0")["source_hash"]  # type: ignore[index]
+    cp.record("syn:0", {"source_hash": good_hash, "chapter": {"not": "a chapter"}})
+
+    other = QueueProvider([reply])
+    s = Synthesizer(other, "m")
+    await s.synthesize(_two_chunk_chapter(), checkpoint=CheckpointManager(cp_path))
+    assert other.calls == 1  # validation fails → recompute
+    assert s.reused_chapters == 0
+
+
+async def test_synthesis_checkpoint_key_is_namespaced(tmp_path: Path) -> None:
+    cp_path = tmp_path / "run.jsonl"
+    await Synthesizer(QueueProvider([_texts("a", "b")]), "m").synthesize(
+        _two_chunk_chapter(), checkpoint=CheckpointManager(cp_path)
+    )
+    keys = set(CheckpointManager(cp_path).results())
+    assert keys == {"syn:0"}  # namespaced, never a bare positional id

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -435,3 +436,101 @@ def test_estimate_translate_only() -> None:
     expected_output = round(est.input_tokens * 1.15)
     # Allow small rounding difference.
     assert abs(est.estimated_output_tokens - expected_output) <= 50
+
+
+# --- Four-phase resume: no paid work repeats (feat--checkpoint-remaining-phases) ------- #
+
+
+class AllPhaseProvider:
+    """Counts LLM calls per phase (condense / synthesis / translate / vision) separately."""
+
+    name = "all-phase"
+
+    def __init__(self) -> None:
+        self.condense_calls = 0
+        self.synth_calls = 0
+        self.translate_calls = 0
+        self.vision_calls = 0
+
+    async def generate(self, messages: list[Message], model: str, **opts: object) -> str:
+        content = messages[-1]["content"]
+        if content.startswith("Condense the following book excerpt"):
+            self.condense_calls += 1
+        elif content.startswith(("Smooth", "Condense further")):
+            self.synth_calls += 1
+        if '"translations"' in content:
+            self.translate_calls += 1
+            return json.dumps({"translations": {str(i): f"ES{i}" for i in range(1, 80)}})
+        return json.dumps(
+            {"texts": {str(i): f"c{i}" for i in range(1, 40)}, "essential_images": ["fig1"]}
+        )
+
+    async def generate_with_image(
+        self, prompt: str, images: list[tuple[bytes, str]], model: str, **opts: object
+    ) -> str:
+        self.vision_calls += 1
+        return json.dumps({"score": 0.9, "essential": True})
+
+
+# chunk_tokens=20 splits the fixture's chapters into 3 + 2 chunks, so synthesis actually
+# runs (a single-chunk chapter would skip it and make the reuse assertion vacuous).
+_FOUR_PHASE = dict(
+    input_path=FIXTURE,
+    formats=["md"],
+    model="m",
+    chunk_tokens=20,
+    translate_to="Spanish",
+    rank_images=True,
+)
+
+
+async def test_full_run_resume_makes_zero_calls_in_all_four_phases(tmp_path: Path) -> None:
+    first = AllPhaseProvider()
+    r1 = await condense_book(out_dir=tmp_path, provider=first, resume=False, **_FOUR_PHASE)
+    # First run exercises every phase — otherwise the resume assertion proves nothing.
+    assert first.condense_calls > 0
+    assert first.synth_calls > 0
+    assert first.translate_calls > 0
+    assert first.vision_calls > 0
+
+    second = AllPhaseProvider()
+    r2 = await condense_book(out_dir=tmp_path, provider=second, resume=True, **_FOUR_PHASE)
+    assert (
+        second.condense_calls,
+        second.synth_calls,
+        second.translate_calls,
+        second.vision_calls,
+    ) == (0, 0, 0, 0)
+    # Reuse counters reflect that every unit came from the checkpoint.
+    assert r2.chunks_reused == r1.chunks_total
+    assert r2.chapters_reused > 0
+    assert r2.images_reused > 0
+    assert r2.batches_reused > 0
+
+
+async def test_changed_model_recomputes_all_four_phases(tmp_path: Path) -> None:
+    await condense_book(out_dir=tmp_path, provider=AllPhaseProvider(), resume=False, **_FOUR_PHASE)
+    # Resume with a different model: every phase fingerprint includes model, so all recompute.
+    args = {**_FOUR_PHASE, "model": "other-model"}
+    p = AllPhaseProvider()
+    await condense_book(out_dir=tmp_path, provider=p, resume=True, **args)
+    assert p.condense_calls > 0
+    assert p.synth_calls > 0
+    assert p.translate_calls > 0
+    assert p.vision_calls > 0
+
+
+async def test_checkpoint_keys_are_namespaced_by_phase(tmp_path: Path) -> None:
+    await condense_book(out_dir=tmp_path, provider=AllPhaseProvider(), resume=False, **_FOUR_PHASE)
+    cp_path = tmp_path / ".breviabook" / "sample-condensed.jsonl"
+    keys = set(CheckpointManager(cp_path).results())
+    assert keys, "checkpoint should hold records from all phases"
+    for key in keys:
+        # Collision-free by construction: bare condense ids never contain ':'; every other
+        # phase carries a prefix ending in one.
+        assert re.fullmatch(r"ch\d+-\d+", key) or key.startswith(("syn:", "tr:", "img:")), key
+    # All four phases actually wrote something.
+    assert any(re.fullmatch(r"ch\d+-\d+", k) for k in keys)
+    assert any(k.startswith("syn:") for k in keys)
+    assert any(k.startswith("tr:") for k in keys)
+    assert any(k.startswith("img:") for k in keys)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -344,7 +345,7 @@ async def test_incomplete_checkpoint_record_is_ignored(tmp_path: Path) -> None:
     cp.record(
         "tr:0:0",
         {
-            "source_hash": _batch_fingerprint(units, "Spanish", None, None),
+            "source_hash": _batch_fingerprint(units, "m", "Spanish", None, None),
             "translations": {"1": "uno"},
         },
     )
@@ -394,16 +395,33 @@ async def test_checkpoint_resume_produces_identical_output(tmp_path: Path) -> No
 
 def test_batch_fingerprint_includes_language() -> None:
     batch = {"1": "hello", "2": "world"}
-    h1 = _batch_fingerprint(batch, "Spanish", "English", None)
-    h2 = _batch_fingerprint(batch, "French", "English", None)
+    h1 = _batch_fingerprint(batch, "m", "Spanish", "English", None)
+    h2 = _batch_fingerprint(batch, "m", "French", "English", None)
     assert h1 != h2
 
 
 def test_batch_fingerprint_includes_glossary() -> None:
     batch = {"1": "thread"}
-    h1 = _batch_fingerprint(batch, "Spanish", None, Glossary({"thread": "hilo"}))
-    h2 = _batch_fingerprint(batch, "Spanish", None, Glossary({"thread": "hebra"}))
+    h1 = _batch_fingerprint(batch, "m", "Spanish", None, Glossary({"thread": "hilo"}))
+    h2 = _batch_fingerprint(batch, "m", "Spanish", None, Glossary({"thread": "hebra"}))
     assert h1 != h2
+
+
+def test_batch_fingerprint_includes_model() -> None:
+    batch = {"1": "hello"}
+    h1 = _batch_fingerprint(batch, "model-a", "Spanish", None, None)
+    h2 = _batch_fingerprint(batch, "model-b", "Spanish", None, None)
+    assert h1 != h2
+
+
+def test_batch_fingerprint_field_order_pinned() -> None:
+    # Pins the exact field order (model first) against a hand-computed digest, so a future
+    # reorder is caught here rather than silently invalidating every translate checkpoint.
+    # Round-trip tests would pass under any deterministic digest; this one would not.
+    expected = hashlib.sha1(  # noqa: S324 - non-security digest, matches Fingerprint
+        b"m\x00Spanish\x00\x00\x001\x00hello\x00", usedforsecurity=False
+    ).hexdigest()
+    assert _batch_fingerprint({"1": "hello"}, "m", "Spanish", None, None) == expected
 
 
 def test_count_translatable_units() -> None:

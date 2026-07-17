@@ -3,11 +3,22 @@
 Per-chunk results are appended to a JSONL file and flushed immediately, so an interrupted
 run loses at most the in-flight chunk. On restart, the manager reloads the file and the
 pipeline skips any chunk already recorded. The result payload is intentionally generic
-(``dict[str, object]``); two fingerprinted shapes are in use (see
-:mod:`breviabook.persistence.fingerprint`):
+(``dict[str, object]``); fingerprints are computed by each phase (see
+:mod:`breviabook.persistence.fingerprint`).
 
-- condenser: ``{"source_hash": str, "chunk": <CondensedChunk dump>}``
-- translator: ``{"source_hash": str, "translations": {uid: text}}``
+One file holds a whole run. Keys are namespaced per phase, and collision-freedom is
+constructed, not accidental: bare condense ids never contain ``":"``, and every other
+phase's key carries a prefix ending in one.
+
+- condense: ``ch{chapter}-{n}`` → ``{"source_hash", "chunk"}``
+- synthesis: ``syn:{chapter_index}`` → ``{"source_hash", "chapter"}``
+- translation: ``tr:{chapter_index}:{start}`` → ``{"source_hash", "translations"}``
+- vision ranking: ``img:{image_id}`` → ``{"source_hash", "verdict"}``
+
+Known edge, accepted: translate-only mode names its file ``{stem}-{lang}.jsonl``, so a
+``--to condensed`` run collides with the condense run's filename. Cross-contamination
+would require identical target language *and* identical content — the fingerprint
+includes both — so the worst case is a recompute.
 
 These files are job state, not source — they are gitignored (``checkpoints/``, ``.breviabook/``).
 """
