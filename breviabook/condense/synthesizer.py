@@ -19,15 +19,15 @@ from breviabook.condense.common import (
     CondenseError,
     Segment,
     extract_json,
-    run_text,
+    parse_condensed_run,
     segment_blocks,
-    split_paragraphs,
+    serialize_run,
     structural_marker,
 )
 from breviabook.condense.condenser import CondensedChunk
 from breviabook.condense.prompts import build_synthesize_messages
 from breviabook.config import DEFAULT_CONCURRENCY
-from breviabook.ir.models import Block, Chapter, Document, ParagraphBlock
+from breviabook.ir.models import Block, Chapter, Document
 from breviabook.llm.base import LLMProvider
 from breviabook.persistence.checkpoint import CheckpointManager
 from breviabook.persistence.fingerprint import Fingerprint
@@ -197,9 +197,9 @@ class Synthesizer:
             raw = await self.provider.generate(messages, self.model)
             try:
                 texts = _parse_texts(raw)
+                return _reassemble(segments, texts)
             except CondenseError:
                 continue
-            return _reassemble(segments, texts)
         return None
 
     def _result(
@@ -242,6 +242,7 @@ def _chapter_fingerprint(
     with identical condensed text would collide.
     """
     fp = Fingerprint()
+    fp.field("condense_block_format:2")
     fp.field(model)
     fp.field(repr(target_ratio))
     fp.field(json.dumps([tolerance, max_trim_passes, min_target_tokens]))
@@ -259,30 +260,29 @@ def _serialize(segments: list[Segment]) -> str:
     for seg in segments:
         if seg.kind == "text":
             lines.append(f"[TEXT {seg.run_id}]")
-            lines.append(run_text(seg.blocks))
+            lines.append(serialize_run(seg.blocks))
         else:
             lines.append(structural_marker(seg.block))
         lines.append("")
     return "\n".join(lines).strip()
 
 
-def _parse_texts(raw: str) -> dict[str, str]:
+def _parse_texts(raw: str) -> dict[str, object]:
     obj = extract_json(raw)
     texts_raw = obj.get("texts")
-    texts: dict[str, str] = {}
+    texts: dict[str, object] = {}
     if isinstance(texts_raw, dict):
         for key, value in texts_raw.items():
-            if isinstance(value, str):
+            if isinstance(value, (str, list)):
                 texts[str(key)] = value
     return texts
 
 
-def _reassemble(segments: list[Segment], texts: dict[str, str]) -> list[Block]:
+def _reassemble(segments: list[Segment], texts: dict[str, object]) -> list[Block]:
     out: list[Block] = []
     for seg in segments:
         if seg.kind == "text":
-            for para in split_paragraphs(texts.get(str(seg.run_id), "")):
-                out.append(ParagraphBlock(text=para))
+            out.extend(parse_condensed_run(texts.get(str(seg.run_id)), seg.blocks))
         elif seg.block is not None:  # keep or image — preserved in place
             out.append(seg.block)
     return out

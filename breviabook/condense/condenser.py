@@ -29,14 +29,14 @@ from breviabook.condense.common import (
     CondenseError,
     Segment,
     extract_json,
-    run_text,
+    parse_condensed_run,
     segment_blocks,
-    split_paragraphs,
+    serialize_run,
     structural_marker,
 )
 from breviabook.condense.prompts import build_condense_messages
 from breviabook.config import DEFAULT_CONCURRENCY
-from breviabook.ir.models import Block, Chapter, Document, ParagraphBlock
+from breviabook.ir.models import Block, Chapter, Document
 from breviabook.llm.base import LLMProvider
 from breviabook.persistence.checkpoint import CheckpointManager
 from breviabook.persistence.fingerprint import Fingerprint
@@ -151,9 +151,9 @@ class Condenser:
             raw = await self.provider.generate(messages, self.model)
             try:
                 texts, essential = _parse_response(raw)
+                return self._reassemble(chunk, segments, texts, essential)
             except CondenseError:
                 continue  # retry with a fresh generation
-            return self._reassemble(chunk, segments, texts, essential)
         # All retries failed to parse: keep the chunk uncondensed and flag it.
         cc = self._passthrough(chunk, segments)
         cc.condense_failed = True
@@ -163,7 +163,7 @@ class Condenser:
         self,
         chunk: Chunk,
         segments: list[Segment],
-        texts: dict[str, str],
+        texts: dict[str, object],
         essential: set[str],
     ) -> CondensedChunk:
         new_blocks: list[Block] = []
@@ -171,8 +171,7 @@ class Condenser:
         dropped: list[str] = []
         for seg in segments:
             if seg.kind == "text":
-                for para in split_paragraphs(texts.get(str(seg.run_id), "")):
-                    new_blocks.append(ParagraphBlock(text=para))
+                new_blocks.extend(parse_condensed_run(texts.get(str(seg.run_id)), seg.blocks))
             elif seg.kind == "keep" and seg.block is not None:
                 new_blocks.append(seg.block)
             elif seg.kind == "image" and seg.image_id is not None:
@@ -215,6 +214,7 @@ def _chunk_fingerprint(chunk: Chunk, model: str, target_ratio: float) -> str:
     unlike the translator's key-sorted unit batches.
     """
     fp = Fingerprint()
+    fp.field("condense_block_format:2")
     fp.field(model)
     fp.field(repr(target_ratio))
     blocks_dump = [b.model_dump(mode="json") for b in chunk.blocks]
@@ -229,7 +229,7 @@ def _serialize(segments: list[Segment]) -> tuple[str, list[str]]:
     for seg in segments:
         if seg.kind == "text":
             lines.append(f"[TEXT {seg.run_id}]")
-            lines.append(run_text(seg.blocks))
+            lines.append(serialize_run(seg.blocks))
         elif seg.kind == "image" and seg.image_id is not None:
             cap = f' — "{seg.caption}"' if seg.caption else ""
             lines.append(f"[IMG:{seg.image_id}{cap}]")
@@ -240,13 +240,13 @@ def _serialize(segments: list[Segment]) -> tuple[str, list[str]]:
     return "\n".join(lines).strip(), image_ids
 
 
-def _parse_response(raw: str) -> tuple[dict[str, str], set[str]]:
+def _parse_response(raw: str) -> tuple[dict[str, object], set[str]]:
     obj = extract_json(raw)
     texts_raw = obj.get("texts")
-    texts: dict[str, str] = {}
+    texts: dict[str, object] = {}
     if isinstance(texts_raw, dict):
         for key, value in texts_raw.items():
-            if isinstance(value, str):
+            if isinstance(value, (str, list)):
                 texts[str(key)] = value
     essential_raw = obj.get("essential_images")
     essential = {str(x) for x in essential_raw} if isinstance(essential_raw, list) else set()

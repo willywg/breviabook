@@ -70,7 +70,7 @@ def segment_blocks(blocks: list[Block]) -> list[Segment]:
 
 
 def run_text(blocks: list[Block]) -> str:
-    """Render a prose run as plain text for the prompt."""
+    """Render a prose run as plain text for the prompt (legacy flat form)."""
     parts: list[str] = []
     for block in blocks:
         if isinstance(block, ListBlock):
@@ -78,6 +78,106 @@ def run_text(blocks: list[Block]) -> str:
         elif isinstance(block, (ParagraphBlock, QuoteBlock)):
             parts.append(block.text)
     return "\n\n".join(p for p in parts if p)
+
+
+def run_has_structured_blocks(blocks: list[Block]) -> bool:
+    """True when the run contains list or quote blocks (array JSON response required)."""
+    return any(isinstance(block, (ListBlock, QuoteBlock)) for block in blocks)
+
+
+def serialize_run(blocks: list[Block]) -> str:
+    """Render a prose run with per-block type labels for the condense/synthesize contract."""
+    lines: list[str] = []
+    for index, block in enumerate(blocks, start=1):
+        if isinstance(block, ParagraphBlock):
+            lines.append(f"[BLOCK {index} type=paragraph]")
+            lines.append(block.text)
+        elif isinstance(block, ListBlock):
+            ordered = "true" if block.ordered else "false"
+            lines.append(f"[BLOCK {index} type=list ordered={ordered}]")
+            if block.ordered:
+                lines.extend(f"{n}. {item}" for n, item in enumerate(block.items, start=1))
+            else:
+                lines.extend(f"- {item}" for item in block.items)
+        elif isinstance(block, QuoteBlock):
+            lines.append(f"[BLOCK {index} type=quote]")
+            lines.append(block.text)
+    return "\n".join(lines)
+
+
+def parse_condensed_run(raw: object | None, source_blocks: list[Block]) -> list[Block]:
+    """Build IR blocks from one [TEXT n] response, preserving list/quote types when present."""
+    structured = run_has_structured_blocks(source_blocks)
+
+    if isinstance(raw, str):
+        if structured:
+            raise CondenseError("structured run requires JSON array response, got string")
+        if not all(isinstance(block, ParagraphBlock) for block in source_blocks):
+            raise CondenseError("structured run requires JSON array response, got string")
+        return [ParagraphBlock(text=para) for para in split_paragraphs(raw)]
+
+    if isinstance(raw, list):
+        if len(raw) != len(source_blocks):
+            raise CondenseError(
+                f"block count mismatch: expected {len(source_blocks)}, got {len(raw)}"
+            )
+        return [
+            _parse_block_entry(entry, source)
+            for entry, source in zip(raw, source_blocks, strict=True)
+        ]
+
+    if raw is None or raw == "":
+        if structured:
+            raise CondenseError("structured run requires JSON array response, got empty value")
+        return []
+
+    raise CondenseError(f"unexpected texts value type: {type(raw).__name__}")
+
+
+def _parse_block_entry(entry: object, source: Block) -> Block:
+    if isinstance(source, ParagraphBlock):
+        text = _paragraph_text(entry)
+        return ParagraphBlock(text=text)
+    if isinstance(source, ListBlock):
+        return _parse_list_entry(entry, source)
+    if isinstance(source, QuoteBlock):
+        return _parse_quote_entry(entry)
+    raise CondenseError(f"unexpected source block type: {type(source).__name__}")
+
+
+def _paragraph_text(entry: object) -> str:
+    if isinstance(entry, str):
+        text = entry.strip()
+    elif isinstance(entry, dict) and entry.get("type") == "paragraph":
+        raw = entry.get("text")
+        text = raw.strip() if isinstance(raw, str) else ""
+    else:
+        raise CondenseError("expected paragraph block")
+    if not text:
+        raise CondenseError("paragraph block missing text")
+    return text
+
+
+def _parse_list_entry(entry: object, source: ListBlock) -> ListBlock:
+    if not isinstance(entry, dict) or entry.get("type") != "list":
+        raise CondenseError("expected list block")
+    items_raw = entry.get("items")
+    if not isinstance(items_raw, list) or not items_raw:
+        raise CondenseError("list block missing items")
+    items = [str(item).strip() for item in items_raw]
+    items = [item for item in items if item]
+    if not items:
+        raise CondenseError("list block has no non-empty items")
+    return ListBlock(items=items, ordered=source.ordered)
+
+
+def _parse_quote_entry(entry: object) -> QuoteBlock:
+    if not isinstance(entry, dict) or entry.get("type") != "quote":
+        raise CondenseError("expected quote block")
+    raw = entry.get("text")
+    if not isinstance(raw, str) or not raw.strip():
+        raise CondenseError("quote block missing text")
+    return QuoteBlock(text=raw.strip())
 
 
 def structural_marker(block: Block | None) -> str:

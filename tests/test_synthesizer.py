@@ -13,7 +13,9 @@ from breviabook.ir.models import (
     DocumentMetadata,
     ImageAsset,
     ImageBlock,
+    ListBlock,
     ParagraphBlock,
+    QuoteBlock,
 )
 from breviabook.llm.base import Message
 from breviabook.llm.usage import Usage
@@ -279,3 +281,37 @@ async def test_synthesis_checkpoint_key_is_namespaced(tmp_path: Path) -> None:
     )
     keys = set(CheckpointManager(cp_path).results())
     assert keys == {"syn:0"}  # namespaced, never a bare positional id
+
+
+def _structured_texts(blocks: list) -> str:
+    payload = [
+        {"type": "paragraph", "text": "Smoothed intro."},
+        {"type": "list", "items": ["Condensed a.", "Condensed b."]},
+        {"type": "quote", "text": "Smoothed quote."},
+        {"type": "paragraph", "text": "Smoothed outro."},
+    ]
+    return json.dumps({"texts": {"1": payload}})
+
+
+async def test_synthesizer_preserves_list_and_quote_structure() -> None:
+    chunks = [
+        _cc(
+            [
+                ParagraphBlock(text="intro filler words here"),
+                ListBlock(items=["alpha detail", "beta detail"], ordered=False),
+                QuoteBlock(text="quoted material here"),
+            ],
+            input_tokens=40,
+        ),
+        _cc([ParagraphBlock(text="outro filler words here")], input_tokens=40),
+    ]
+    provider = QueueProvider([_structured_texts([])])
+    chapters = await Synthesizer(provider, "m").synthesize(chunks)
+
+    assert len(chapters) == 1
+    assert provider.calls == 1
+    kinds = [b.type for b in chapters[0].blocks]
+    assert kinds == ["paragraph", "list", "quote", "paragraph"]
+    lst = chapters[0].blocks[1]
+    assert isinstance(lst, ListBlock) and lst.items == ["Condensed a.", "Condensed b."]
+    assert isinstance(chapters[0].blocks[2], QuoteBlock)

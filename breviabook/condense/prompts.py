@@ -9,6 +9,30 @@ from __future__ import annotations
 
 from breviabook.llm.base import Message
 
+_CONDENSE_STRUCTURE_RULES = """\
+- Each [TEXT n] segment lists sub-blocks as [BLOCK k type=paragraph|list|quote]. When any \
+sub-block is type=list or type=quote, return a JSON **array** for that [TEXT n] key — one \
+object per sub-block, same count and types, in order. Example:
+  {"1": [{"type": "paragraph", "text": "..."}, {"type": "list", "items": ["a", "b"], \
+"ordered": false}, {"type": "quote", "text": "..."}]}
+- Condense content inside each block only; do not merge, split, or reorder blocks.
+- For lists: return condensed plain strings in "items"; match the ordered= label.
+- For quotes: return condensed plain string in "text".
+- When a [TEXT n] segment has only [BLOCK … type=paragraph] sub-blocks, you may return either \
+a plain string (blank-line separated paragraphs) or an array of {"type": "paragraph", "text": \
+"..."} objects."""
+
+_SYNTH_STRUCTURE_RULES = """\
+- Each [TEXT n] segment lists sub-blocks as [BLOCK k type=paragraph|list|quote]. When any \
+sub-block is type=list or type=quote, return a JSON **array** for that [TEXT n] key — one \
+object per sub-block, same count and types, in order.
+- Smooth transitions and remove cross-segment repetition **within** each block; preserve block \
+types and order — do not flatten lists or quotes into plain paragraphs.
+- For lists: return condensed plain strings in "items"; match the ordered= label.
+- For quotes: return condensed plain string in "text".
+- When a [TEXT n] segment has only paragraph sub-blocks, you may return either a plain string \
+or an array of {"type": "paragraph", "text": "..."} objects."""
+
 CONDENSE_SYSTEM_PROMPT = (
     "You are an expert technical editor. You condense technical book content so it reads "
     "fast and without filler, while preserving technical accuracy, definitions, concrete "
@@ -26,6 +50,7 @@ def build_condense_messages(body: str, target_ratio: float, image_ids: list[str]
 Rules:
 - Condense each segment labeled [TEXT n]. Remove redundancy, filler, and repetition; keep key
   facts, definitions, concrete examples, numbers, and technical terms.
+{_CONDENSE_STRUCTURE_RULES}
 - Preserve technical identifiers, API names, file paths, and URLs exactly.
 - Do NOT reproduce code blocks; they are preserved automatically. Condense prose only.
 - Images appear as [IMG:id — "caption"]. Decide which are ESSENTIAL to understand the retained
@@ -33,7 +58,8 @@ Rules:
 - Do not add commentary, headings, or content that was not present.
 
 Return ONLY a JSON object (no markdown fences, no prose) of exactly this form:
-{{"texts": {{"1": "<condensed text for [TEXT 1]>", "2": "..."}}, "essential_images": ["id"]}}
+{{"texts": {{"1": "<condensed [TEXT 1] or array of block objects>", "2": "..."}}, \
+"essential_images": ["id"]}}
 
 Available image ids: {available}
 
@@ -68,14 +94,15 @@ def build_synthesize_messages(
 of about {words} words total.
 
 Rules:
-- Condense each segment labeled [TEXT n]; the combined result must flow as continuous prose.
+- Condense each segment labeled [TEXT n].
+{_SYNTH_STRUCTURE_RULES}
 - Remove repetition that appears across segments (these are chunk boundaries).
 - Preserve technical identifiers, API names, file paths, and URLs exactly.
 - Do NOT reproduce code blocks, tables, or images; they are preserved automatically.
 - Do not invent content or add headings that were not present.
 
 Return ONLY a JSON object (no markdown fences, no prose) of exactly this form:
-{{"texts": {{"1": "<condensed text for [TEXT 1]>", "2": "..."}}}}
+{{"texts": {{"1": "<condensed [TEXT 1] or array of block objects>", "2": "..."}}}}
 
 --- SECTION START ---
 {body}

@@ -21,7 +21,9 @@ from breviabook.ir.models import (
     DocumentMetadata,
     ImageAsset,
     ImageBlock,
+    ListBlock,
     ParagraphBlock,
+    QuoteBlock,
 )
 from breviabook.llm.base import Message
 from breviabook.llm.usage import Usage
@@ -340,3 +342,55 @@ async def test_condenses_real_fixture_chunks() -> None:
     assert len(condensed) == len(chunks)
     out = assemble_condensed_document(doc, condensed)
     assert out.chapters
+
+
+async def test_condense_preserves_list_and_quote_structure() -> None:
+    chunk = _chunk(
+        [
+            ParagraphBlock(text="Intro with filler words."),
+            ListBlock(items=["First point detailed.", "Second point detailed."], ordered=False),
+            QuoteBlock(text="An important citation from the author."),
+            ParagraphBlock(text="Closing with filler."),
+        ]
+    )
+    reply = json.dumps(
+        {
+            "texts": {
+                "1": [
+                    {"type": "paragraph", "text": "Short intro."},
+                    {"type": "list", "items": ["First point.", "Second point."]},
+                    {"type": "quote", "text": "Important citation."},
+                    {"type": "paragraph", "text": "Short close."},
+                ]
+            },
+            "essential_images": [],
+        }
+    )
+    cc = await Condenser(ScriptedProvider(reply), "m").condense_chunk(chunk)
+    assert cc.condense_failed is False
+    assert [b.type for b in cc.blocks] == ["paragraph", "list", "quote", "paragraph"]
+    lst = cc.blocks[1]
+    assert isinstance(lst, ListBlock) and lst.items == ["First point.", "Second point."]
+    assert isinstance(cc.blocks[2], QuoteBlock)
+
+
+async def test_condense_structured_run_string_response_passthrough_not_flattened() -> None:
+    chunk = _chunk(
+        [
+            ParagraphBlock(text="Intro with filler."),
+            ListBlock(items=["First point.", "Second point."], ordered=False),
+            QuoteBlock(text="A citation."),
+        ]
+    )
+    reply = json.dumps(
+        {"texts": {"1": "flat condensed prose without structure"}, "essential_images": []}
+    )
+    provider = ScriptedProvider(reply)
+    cc = await Condenser(provider, "m", max_retries=2).condense_chunk(chunk)
+    assert cc.condense_failed is True
+    assert provider.calls == 2
+    assert [b.type for b in cc.blocks] == ["paragraph", "list", "quote"]
+    assert isinstance(cc.blocks[1], ListBlock)
+    assert cc.blocks[1].items == ["First point.", "Second point."]
+    assert isinstance(cc.blocks[2], QuoteBlock)
+    assert cc.blocks[2].text == "A citation."

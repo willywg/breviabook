@@ -21,6 +21,66 @@ from breviabook.pipeline import (
 FIXTURE = Path(__file__).parent / "fixtures" / "sample.epub"
 
 
+def _structured_array_for_run(run_body: str, run_id: str) -> list[dict[str, object]]:
+    out: list[dict[str, object]] = []
+    pattern = re.compile(
+        r"\[BLOCK (\d+) type=(paragraph|list|quote)(?: ordered=(true|false))?\]\n"
+        r"(.*?)(?=\n\[BLOCK |\Z)",
+        re.DOTALL,
+    )
+    for match in pattern.finditer(run_body + "\n"):
+        btype = match.group(2)
+        block_body = match.group(4).strip()
+        suffix = f"{run_id}-{match.group(1)}"
+        if btype == "paragraph":
+            out.append({"type": "paragraph", "text": f"c{suffix}"})
+        elif btype == "quote":
+            out.append({"type": "quote", "text": f"q{suffix}"})
+        else:
+            items: list[str] = []
+            for line in block_body.splitlines():
+                line = line.strip()
+                if line.startswith("- ") or re.match(r"\d+\.\s", line):
+                    items.append(f"c{len(items) + 1}")
+            if not items:
+                items = ["c1"]
+            out.append({"type": "list", "items": items})
+    return out
+
+
+def _reply_for_run(run_body: str, run_id: str) -> str | list[dict[str, object]]:
+    if re.search(r"\[BLOCK \d+ type=(list|quote)\b", run_body):
+        return _structured_array_for_run(run_body, run_id)
+    return f"c{run_id}"
+
+
+def _adaptive_texts_reply(content: str) -> dict[str, object]:
+    """Build condense/synth JSON texts keyed by [TEXT n], preserving list/quote structure."""
+    body_match = re.search(
+        r"--- (?:EXCERPT|SECTION) START ---\n(.*)\n--- (?:EXCERPT|SECTION) END ---",
+        content,
+        re.DOTALL,
+    )
+    if not body_match:
+        return {}
+    body = body_match.group(1)
+    texts: dict[str, object] = {}
+    markers = list(re.finditer(r"\[TEXT (\d+)\]\n", body))
+    for index, match in enumerate(markers):
+        run_id = match.group(1)
+        start = match.end()
+        end = markers[index + 1].start() if index + 1 < len(markers) else len(body)
+        texts[run_id] = _reply_for_run(body[start:end].strip(), run_id)
+    return texts
+
+
+def _adaptive_condense_json(content: str) -> str:
+    return json.dumps(
+        {"texts": _adaptive_texts_reply(content), "essential_images": ["fig1"]},
+        ensure_ascii=False,
+    )
+
+
 class ScriptedProvider:
     name = "scripted"
 
@@ -32,9 +92,6 @@ class ScriptedProvider:
     async def generate(self, messages: list[Message], model: str, **opts: object) -> str:
         self.calls += 1
         return self.reply
-
-
-_REPLY = json.dumps({"texts": {"1": "c1", "2": "c2", "3": "c3"}, "essential_images": ["fig1"]})
 
 
 def test_validate_formats_normalizes() -> None:
@@ -50,7 +107,7 @@ async def test_end_to_end_writes_md_and_epub(tmp_path: Path) -> None:
         input_path=FIXTURE,
         out_dir=tmp_path,
         formats=["md", "epub"],
-        provider=ScriptedProvider(_REPLY),
+        provider=AdaptiveProvider(),
         model="m",
     )
     names = {p.name for p in result.output_files}
@@ -71,9 +128,23 @@ async def test_unsupported_input_raises(tmp_path: Path) -> None:
             input_path=fake,
             out_dir=tmp_path,
             formats=["md"],
-            provider=ScriptedProvider(_REPLY),
+            provider=AdaptiveProvider(),
             model="m",
         )
+
+
+class AdaptiveProvider:
+    """Returns block-aligned condense/synth JSON derived from the prompt body."""
+
+    name = "adaptive"
+
+    def __init__(self) -> None:
+        self.calls = 0
+        self.usage = Usage()
+
+    async def generate(self, messages: list[Message], model: str, **opts: object) -> str:
+        self.calls += 1
+        return _adaptive_condense_json(messages[-1]["content"])
 
 
 class PhaseAwareProvider:
@@ -88,7 +159,7 @@ class PhaseAwareProvider:
     async def generate(self, messages: list[Message], model: str, **opts: object) -> str:
         if messages[-1]["content"].startswith("Condense the following book excerpt"):
             self.condense_calls += 1
-        return _REPLY
+        return _adaptive_condense_json(messages[-1]["content"])
 
 
 async def test_resume_skips_provider_for_done_chunks(tmp_path: Path) -> None:
@@ -155,7 +226,7 @@ async def test_fresh_run_clears_stale_checkpoint(tmp_path: Path) -> None:
         input_path=FIXTURE,
         out_dir=tmp_path,
         formats=["md"],
-        provider=ScriptedProvider(_REPLY),
+        provider=AdaptiveProvider(),
         model="m",
         resume=False,  # should clear the stale entry
     )
@@ -179,7 +250,7 @@ async def test_pdf_input_end_to_end(tmp_path: Path) -> None:
         input_path=PDF_FIXTURE,
         out_dir=tmp_path,
         formats=["md"],
-        provider=ScriptedProvider(_REPLY),
+        provider=AdaptiveProvider(),
         model="m",
     )
     out = tmp_path / "sample-condensed.md"
@@ -213,9 +284,7 @@ class RoutingProvider:
         content = messages[-1]["content"]
         if '"translations"' in content:
             return json.dumps({"translations": {str(i): f"ES{i}" for i in range(1, 30)}})
-        return json.dumps(
-            {"texts": {str(i): f"c{i}" for i in range(1, 10)}, "essential_images": []}
-        )
+        return _adaptive_condense_json(content)
 
 
 async def test_translation_end_to_end(tmp_path: Path) -> None:
@@ -290,7 +359,7 @@ async def test_pdf_render_failure_is_skipped_with_warning(
         input_path=FIXTURE,
         out_dir=tmp_path,
         formats=["md", "pdf"],
-        provider=ScriptedProvider(_REPLY),
+        provider=AdaptiveProvider(),
         model="m",
     )
     assert {p.name for p in result.output_files} == {"sample-condensed.md"}  # pdf skipped
@@ -341,7 +410,7 @@ async def test_translate_only_requires_translate_to(tmp_path: Path) -> None:
             input_path=FIXTURE,
             out_dir=tmp_path,
             formats=["md"],
-            provider=ScriptedProvider(_REPLY),
+            provider=AdaptiveProvider(),
             model="m",
             translate_only=True,
         )
@@ -468,9 +537,7 @@ class AllPhaseProvider:
         if '"translations"' in content:
             self.translate_calls += 1
             return json.dumps({"translations": {str(i): f"ES{i}" for i in range(1, 80)}})
-        return json.dumps(
-            {"texts": {str(i): f"c{i}" for i in range(1, 40)}, "essential_images": ["fig1"]}
-        )
+        return _adaptive_condense_json(content)
 
     async def generate_with_image(
         self, prompt: str, images: list[tuple[bytes, str]], model: str, **opts: object
