@@ -13,8 +13,11 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from typing import TypeVar
 
 from breviabook.llm.key_pool import KeyPool
+
+T = TypeVar("T")
 
 _RATE_LIMIT_NAMES = {"RateLimitError", "Timeout", "APIConnectionError"}
 _AUTH_NAMES = {"AuthenticationError", "PermissionDeniedError"}
@@ -30,6 +33,27 @@ def is_rate_limit_error(exc: BaseException) -> bool:
 
 def is_auth_error(exc: BaseException) -> bool:
     return bool(_mro_names(exc) & _AUTH_NAMES)
+
+
+async def retry_with_backoff(
+    call: Callable[[], Awaitable[T]],
+    *,
+    max_retries: int = 3,
+    backoff_base: float = 0.5,
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    is_retryable: Callable[[BaseException], bool] = is_rate_limit_error,
+) -> T:
+    """Run ``call()`` with exponential backoff on transient rate-limit/connection errors."""
+    attempts = 0
+    while True:
+        try:
+            return await call()
+        except Exception as exc:
+            if is_retryable(exc) and attempts < max_retries:
+                await sleep(backoff_base * (2**attempts))
+                attempts += 1
+                continue
+            raise
 
 
 async def with_key_rotation(
