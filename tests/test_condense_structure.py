@@ -58,6 +58,30 @@ def test_parse_condensed_run_structured_array() -> None:
     assert isinstance(out[2], QuoteBlock)
 
 
+def test_parse_condensed_run_copies_presentation_shell() -> None:
+    source = [
+        ParagraphBlock(text="Long centered attribution.", align="center"),
+        ListBlock(
+            items=["First detailed.", "Second detailed."],
+            ordered=False,
+            marker_type="square",
+            marker_color="#c00",
+        ),
+        QuoteBlock(text="A long citation.", align="center"),
+    ]
+    raw = [
+        {"type": "paragraph", "text": "Short."},
+        {"type": "list", "items": ["One.", "Two."]},
+        {"type": "quote", "text": "Quote."},
+    ]
+    out = parse_condensed_run(raw, source)
+    assert isinstance(out[0], ParagraphBlock) and out[0].align == "center"
+    lst = out[1]
+    assert isinstance(lst, ListBlock)
+    assert lst.marker_type == "square" and lst.marker_color == "#c00"
+    assert isinstance(out[2], QuoteBlock) and out[2].align == "center"
+
+
 def test_parse_condensed_run_string_on_structured_run_raises() -> None:
     source = [ListBlock(items=["a"]), ParagraphBlock(text="p")]
     with pytest.raises(CondenseError, match="array response"):

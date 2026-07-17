@@ -2,6 +2,9 @@
 
 The simplest renderer; it validates the IR end-to-end without an LLM (ROADMAP §10 Phase 2).
 Image assets are written to disk and referenced with relative links.
+
+Block presentation (``align``, ``marker_type``, ``marker_color``) is not expressible in MD and
+is intentionally dropped — inline ``rich`` still converts to Markdown/GFM where possible.
 """
 
 from __future__ import annotations

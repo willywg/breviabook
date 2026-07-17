@@ -137,11 +137,12 @@ def parse_condensed_run(raw: object | None, source_blocks: list[Block]) -> list[
 def _parse_block_entry(entry: object, source: Block) -> Block:
     if isinstance(source, ParagraphBlock):
         text = _paragraph_text(entry)
-        return ParagraphBlock(text=text)
+        # Preserve presentation shell from source (LLM only returns content).
+        return ParagraphBlock(text=text, align=source.align)
     if isinstance(source, ListBlock):
         return _parse_list_entry(entry, source)
     if isinstance(source, QuoteBlock):
-        return _parse_quote_entry(entry)
+        return _parse_quote_entry(entry, source)
     raise CondenseError(f"unexpected source block type: {type(source).__name__}")
 
 
@@ -168,16 +169,21 @@ def _parse_list_entry(entry: object, source: ListBlock) -> ListBlock:
     items = [item for item in items if item]
     if not items:
         raise CondenseError("list block has no non-empty items")
-    return ListBlock(items=items, ordered=source.ordered)
+    return ListBlock(
+        items=items,
+        ordered=source.ordered,
+        marker_type=source.marker_type,
+        marker_color=source.marker_color,
+    )
 
 
-def _parse_quote_entry(entry: object) -> QuoteBlock:
+def _parse_quote_entry(entry: object, source: QuoteBlock) -> QuoteBlock:
     if not isinstance(entry, dict) or entry.get("type") != "quote":
         raise CondenseError("expected quote block")
     raw = entry.get("text")
     if not isinstance(raw, str) or not raw.strip():
         raise CondenseError("quote block missing text")
-    return QuoteBlock(text=raw.strip())
+    return QuoteBlock(text=raw.strip(), align=source.align)
 
 
 def structural_marker(block: Block | None) -> str:

@@ -25,18 +25,25 @@ from pydantic import BaseModel, Field
 # budgeting/condensation unchanged; renderers and the translator prefer ``rich`` when present.
 # Invariant when set: ``text == htmlsan.strip_tags(rich)``.
 
+# Block presentation (Phase A fidelity): optional shell fields. ``None`` = UA default.
+# Distinct from ``rich`` (inline markup). Condensation must copy these from the source block.
+Align = Literal["left", "center", "right"]
+MarkerType = Literal["disc", "circle", "square", "none"]
+
 
 class HeadingBlock(BaseModel):
     type: Literal["heading"] = "heading"
     level: int = Field(ge=1, le=6)
     text: str
     rich: str | None = None
+    align: Align | None = None
 
 
 class ParagraphBlock(BaseModel):
     type: Literal["paragraph"] = "paragraph"
     text: str
     rich: str | None = None
+    align: Align | None = None
 
 
 class CodeBlock(BaseModel):
@@ -64,6 +71,7 @@ class QuoteBlock(BaseModel):
     type: Literal["quote"] = "quote"
     text: str
     rich: str | None = None
+    align: Align | None = None
 
 
 class ListBlock(BaseModel):
@@ -72,6 +80,9 @@ class ListBlock(BaseModel):
     ordered: bool = False
     # Per-item sanitized inline HTML, aligned 1:1 with ``items``; None when no item has markup.
     items_rich: list[str] | None = None
+    marker_type: MarkerType | None = None
+    # Safe CSS color for the bullet/number; renderers emit ``li::marker`` only (never ``ul`` color).
+    marker_color: str | None = None
 
 
 Block = Annotated[

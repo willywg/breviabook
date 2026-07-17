@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+from bs4 import BeautifulSoup
+
 from breviabook.utils.htmlsan import (
+    block_align,
     contains_markup,
     inline_tag_signature,
+    list_marker,
     parse_class_styles,
     sanitize_inline,
     strip_tags,
@@ -72,6 +76,35 @@ def test_signature_detects_tag_changes() -> None:
 def test_plain_text_stays_plain() -> None:
     assert sanitize_inline("no markup here") == "no markup here"
     assert not contains_markup(sanitize_inline("no markup here"))
+
+
+def test_block_align_from_class_and_inline() -> None:
+    cs = parse_class_styles(".center { text-align: center } .lefty { text-align: left }")
+    node = BeautifulSoup('<p class="center">x</p>', "html.parser").p
+    assert node is not None and block_align(node, cs) == "center"
+    inline = BeautifulSoup('<p style="text-align:right">x</p>', "html.parser").p
+    assert inline is not None and block_align(inline, cs) == "right"
+    # Unsafe / unknown align values are ignored.
+    bad = BeautifulSoup('<p style="text-align:justify">x</p>', "html.parser").p
+    assert bad is not None and block_align(bad, cs) is None
+
+
+def test_list_marker_type_and_color() -> None:
+    cs = parse_class_styles(".redsq { list-style-type: square; color: #c00 }")
+    node = BeautifulSoup('<ul class="redsq"><li>a</li></ul>', "html.parser").ul
+    assert node is not None
+    assert list_marker(node, cs) == ("square", "#c00")
+    shorthand = BeautifulSoup('<ul style="list-style: circle outside"></ul>', "html.parser").ul
+    assert shorthand is not None and list_marker(shorthand, {}) == ("circle", None)
+    # Custom bullet image degrades to square.
+    img = BeautifulSoup('<ul style="list-style-image: url(x.png)"></ul>', "html.parser").ul
+    assert img is not None and list_marker(img, {}) == ("square", None)
+
+
+def test_safe_link_schemes_unchanged_for_internal_hrefs() -> None:
+    # Phase A must not widen the allowlist — relative / fragment hrefs stay unwrapped.
+    assert sanitize_inline('<a href="#fn3">3</a>') == "3"
+    assert sanitize_inline('<a href="chap.xhtml#x">t</a>') == "t"
 
 
 def test_inline_image_resolved_and_signature() -> None:

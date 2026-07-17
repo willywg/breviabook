@@ -35,9 +35,12 @@ from breviabook.ir.models import (
 )
 from breviabook.parsers.base import ParseError
 from breviabook.utils.htmlsan import (
+    Align,
     ClassStyles,
     ImgResolver,
+    block_align,
     contains_markup,
+    list_marker,
     parse_class_styles,
     sanitize_inline,
     strip_tags,
@@ -49,6 +52,8 @@ warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 
 _CONTAINER = "META-INF/container.xml"
 _HEADINGS = {"h1": 1, "h2": 2, "h3": 3, "h4": 4, "h5": 5, "h6": 6}
+# Block tags that may inherit ``text-align`` from a single-child wrapper div (one level only).
+_ALIGNABLE = frozenset({"p", "blockquote", *_HEADINGS})
 
 
 def _local(tag: str) -> str:
@@ -204,6 +209,7 @@ class EpubParser:
         out: list[Block],
         class_styles: ClassStyles,
         img_resolver: ImgResolver,
+        inherit_align: Align | None = None,
     ) -> None:
         for child in node.children:
             if not isinstance(child, Tag):
@@ -212,7 +218,10 @@ class EpubParser:
             if tag in _HEADINGS:
                 text, rich = _rich_text(child, class_styles, img_resolver)
                 if text:
-                    out.append(HeadingBlock(level=_HEADINGS[tag], text=text, rich=rich))
+                    align = block_align(child, class_styles) or inherit_align
+                    out.append(
+                        HeadingBlock(level=_HEADINGS[tag], text=text, rich=rich, align=align)
+                    )
             elif tag == "pre":
                 out.append(self._code_block(child))
             elif tag == "figure":
@@ -222,7 +231,8 @@ class EpubParser:
             elif tag == "blockquote":
                 text, rich = _rich_text(child, class_styles, img_resolver)
                 if text:
-                    out.append(QuoteBlock(text=text, rich=rich))
+                    align = block_align(child, class_styles) or inherit_align
+                    out.append(QuoteBlock(text=text, rich=rich, align=align))
             elif tag in ("ul", "ol"):
                 lis = child.find_all("li", recursive=False)
                 pairs = [rt for li in lis if (rt := _rich_text(li, class_styles, img_resolver))[0]]
@@ -230,22 +240,62 @@ class EpubParser:
                     items = [t for t, _ in pairs]
                     riches = [r or t for t, r in pairs]
                     items_rich = riches if any(r for _, r in pairs) else None
-                    out.append(ListBlock(items=items, ordered=tag == "ol", items_rich=items_rich))
+                    marker_type, marker_color = list_marker(child, class_styles)
+                    out.append(
+                        ListBlock(
+                            items=items,
+                            ordered=tag == "ol",
+                            items_rich=items_rich,
+                            marker_type=marker_type,
+                            marker_color=marker_color,
+                        )
+                    )
             elif tag == "table":
                 out.append(self._table_block(child))
             elif tag == "p":
                 text, rich = _rich_text(child, class_styles, img_resolver)
                 if text:
                     # Text (possibly mixed with inline images, which live in ``rich``).
-                    out.append(ParagraphBlock(text=text, rich=rich))
+                    align = block_align(child, class_styles) or inherit_align
+                    out.append(ParagraphBlock(text=text, rich=rich, align=align))
                 elif child.find("img"):
                     # Image-only paragraph → standalone block image(s).
                     self._emit_images(child, href, opf_path, manifest, zf, images, out)
             else:
                 # Structural wrapper (div/section/body/...): recurse for nested blocks.
-                self._walk(
-                    child, href, opf_path, manifest, zf, images, out, class_styles, img_resolver
-                )
+                # One-level align inheritance: Calibre often puts text-align on a div that wraps
+                # a single paragraph/quote/heading. Only when there is exactly one block child.
+                kids = [c for c in child.children if isinstance(c, Tag)]
+                wrapper_align = block_align(child, class_styles)
+                if (
+                    wrapper_align is not None
+                    and len(kids) == 1
+                    and kids[0].name.lower() in _ALIGNABLE
+                ):
+                    self._walk(
+                        child,
+                        href,
+                        opf_path,
+                        manifest,
+                        zf,
+                        images,
+                        out,
+                        class_styles,
+                        img_resolver,
+                        inherit_align=wrapper_align,
+                    )
+                else:
+                    self._walk(
+                        child,
+                        href,
+                        opf_path,
+                        manifest,
+                        zf,
+                        images,
+                        out,
+                        class_styles,
+                        img_resolver,
+                    )
 
     def _code_block(self, pre: Tag) -> CodeBlock:
         code_el = pre.find("code")

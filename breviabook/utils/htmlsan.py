@@ -22,16 +22,21 @@ import html
 import re
 from collections import Counter
 from collections.abc import Callable
+from typing import Literal
 
 from bs4 import BeautifulSoup, Tag
 from bs4.element import NavigableString, PageElement
 
 # Effective styles a node can contribute. ``ClassStyles`` maps a CSS class name to a subset of
-# {"italic","bold","strike","color"} extracted from the stylesheet.
+# {"italic","bold","strike","color","align","list-style-type"} extracted from the stylesheet.
 ClassStyles = dict[str, dict[str, str]]
 # Given an inline ``<img>`` tag, register its asset and return the ``image_id`` (or None to drop).
 # Supplied by the parser; at translation time no resolver is used and existing ids are kept.
 ImgResolver = Callable[[Tag], "str | None"]
+
+Align = Literal["left", "center", "right"]
+MarkerType = Literal["disc", "circle", "square", "none"]
+
 
 _ITALIC_TAGS = {"i", "em"}
 _BOLD_TAGS = {"b", "strong"}
@@ -44,6 +49,13 @@ _DROP_CONTENT = {"script", "style", "head", "title", "iframe", "object", "embed"
 # url(), expression, quotes, semicolons or comments is rejected outright.
 _COLOR_RE = re.compile(r"^\s*(#[0-9a-fA-F]{3,8}|rgba?\([0-9.,%\s]+\)|[a-zA-Z]{3,20})\s*$")
 _WS_RE = re.compile(r"\s+")
+_ALIGN_MAP: dict[str, Align] = {"left": "left", "center": "center", "right": "right"}
+_MARKER_MAP: dict[str, MarkerType] = {
+    "disc": "disc",
+    "circle": "circle",
+    "square": "square",
+    "none": "none",
+}
 
 
 def esc(text: str) -> str:
@@ -57,8 +69,17 @@ def _safe_color(value: str) -> str | None:
     return None
 
 
+def _normalize_marker_type(value: str) -> MarkerType | None:
+    """Map a CSS list-style-type (or first token of list-style) to an IR marker, or None."""
+    token = value.strip().lower().split(None, 1)[0] if value.strip() else ""
+    # Custom bullet images are not modeled — degrade to square.
+    if token.startswith("url("):
+        return "square"
+    return _MARKER_MAP.get(token)
+
+
 def _parse_style_attr(style: str) -> dict[str, str]:
-    """Pull the four style signals we care about out of an inline ``style`` string."""
+    """Pull style signals we care about out of an inline ``style`` string."""
     out: dict[str, str] = {}
     for decl in style.split(";"):
         if ":" not in decl:
@@ -75,6 +96,21 @@ def _parse_style_attr(style: str) -> dict[str, str]:
             color = _safe_color(val)
             if color:
                 out["color"] = color
+        elif prop == "text-align" and val in _ALIGN_MAP:
+            out["align"] = val
+        elif prop == "list-style-type":
+            marker = _normalize_marker_type(val)
+            if marker is not None:
+                out["list-style-type"] = marker
+        elif prop == "list-style":
+            # Shorthand: take the first recognizable type token (ignore position/image noise).
+            for token in val.replace(",", " ").split():
+                marker = _normalize_marker_type(token)
+                if marker is not None:
+                    out["list-style-type"] = marker
+                    break
+        elif prop == "list-style-image" and val not in {"", "none"}:
+            out["list-style-type"] = "square"
     return out
 
 
@@ -241,3 +277,32 @@ def inline_image_ids(rich: str) -> list[str]:
         if isinstance(iid, str) and iid:
             ids.append(iid)
     return ids
+
+
+def _as_align(value: str | None) -> Align | None:
+    return _ALIGN_MAP.get(value) if value is not None else None
+
+
+def _as_marker_type(value: str | None) -> MarkerType | None:
+    return _MARKER_MAP.get(value) if value is not None else None
+
+
+def block_align(node: Tag, class_styles: ClassStyles | None = None) -> Align | None:
+    """Resolve ``text-align`` on a block element from classes + inline style."""
+    return _as_align(_effective_styles(node, class_styles or {}).get("align"))
+
+
+def list_marker(
+    node: Tag, class_styles: ClassStyles | None = None
+) -> tuple[MarkerType | None, str | None]:
+    """Resolve list marker type + color from a ``ul``/``ol`` element's classes + inline style.
+
+    Color is the list element's own ``color`` (Calibre often colors bullets this way). Renderers
+    must apply it via ``li::marker`` only — never ``color`` on the ``ul`` (that bleeds into text).
+    """
+    eff = _effective_styles(node, class_styles or {})
+    marker = _as_marker_type(eff.get("list-style-type"))
+    color = eff.get("color")
+    if color is not None and _safe_color(color) is None:
+        color = None
+    return marker, color

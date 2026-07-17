@@ -82,6 +82,26 @@ async def test_translates_text_blocks_and_preserves_code_table_image() -> None:
     assert isinstance(out.blocks[5], ImageBlock) and out.blocks[5].image_id == "img1"
 
 
+async def test_translation_preserves_block_presentation_shell() -> None:
+    chapter = Chapter(
+        blocks=[
+            ParagraphBlock(text="Centered line.", align="center"),
+            ListBlock(
+                items=["one", "two"],
+                marker_type="square",
+                marker_color="#c00",
+            ),
+        ]
+    )
+    reply = _translations({"1": "Línea centrada.", "2": "uno", "3": "dos"})
+    out = await Translator(ScriptedProvider(reply), "m", "Spanish").translate_chapter(chapter)
+    para = out.blocks[0]
+    assert isinstance(para, ParagraphBlock) and para.align == "center"
+    lst = out.blocks[1]
+    assert isinstance(lst, ListBlock)
+    assert lst.marker_type == "square" and lst.marker_color == "#c00"
+
+
 async def test_code_text_not_sent_to_llm() -> None:
     chapter = Chapter(blocks=[ParagraphBlock(text="hola"), CodeBlock(text="SECRET_CODE_TOKEN")])
     provider = ScriptedProvider(_translations({"1": "hi"}))
