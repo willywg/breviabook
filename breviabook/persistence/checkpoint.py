@@ -63,7 +63,13 @@ class CheckpointManager:
         return self._results.get(chunk_id)
 
     def record(self, chunk_id: str, result: Result) -> None:
-        """Persist ``result`` for ``chunk_id`` (append + flush) and update memory."""
+        """Persist ``result`` for ``chunk_id`` (append + flush) and update memory.
+
+        This method is synchronous and contains no ``await``. Under BreviaBook's single asyncio
+        event loop, its append, flush, and in-memory update cannot interleave with another task.
+        If threads or an ``await`` are introduced here, review this invariant before relying on
+        concurrent workers.
+        """
         self.path.parent.mkdir(parents=True, exist_ok=True)
         line = json.dumps({"chunk_id": chunk_id, "result": result}, ensure_ascii=False)
         with self.path.open("a", encoding="utf-8") as fh:

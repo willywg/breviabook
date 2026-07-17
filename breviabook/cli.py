@@ -16,7 +16,7 @@ from rich.console import Console
 from rich.table import Table
 
 from breviabook import __version__
-from breviabook.config import Settings, load_settings
+from breviabook.config import DEFAULT_CONCURRENCY, Settings, load_settings
 from breviabook.llm.base import LLMProvider
 from breviabook.llm.factory import get_provider
 from breviabook.llm.usage import Usage
@@ -193,6 +193,9 @@ def condense(
     ] = None,
     out: Annotated[Path, typer.Option(help="Output directory")] = Path("./output"),
     resume: Annotated[bool, typer.Option(help="Resume from checkpoint")] = False,
+    concurrency: Annotated[
+        int, typer.Option(min=1, help="Maximum concurrent LLM calls per pipeline phase")
+    ] = DEFAULT_CONCURRENCY,
     reasoning_effort: Annotated[
         str | None,
         typer.Option(
@@ -294,6 +297,7 @@ def condense(
                     rank_images=rank_images,
                     manual_toc=toc,
                     reporter=reporter,
+                    concurrency=concurrency,
                 )
             )
     except (NotImplementedError, ValueError) as exc:
@@ -319,6 +323,9 @@ def translate(
     formats: Annotated[str, typer.Option(help="Comma list of epub,pdf,md")] = "epub,pdf,md",
     out: Annotated[Path, typer.Option(help="Output directory")] = Path("./output"),
     resume: Annotated[bool, typer.Option(help="Resume from translation checkpoint")] = False,
+    concurrency: Annotated[
+        int, typer.Option(min=1, help="Maximum concurrent LLM calls per pipeline phase")
+    ] = DEFAULT_CONCURRENCY,
     provider: Annotated[str, typer.Option(help="ollama|openai|gemini|openrouter")] = "ollama",
     model: Annotated[str | None, typer.Option(help="Model tag (defaults to config)")] = None,
     api_endpoint: Annotated[
@@ -419,6 +426,7 @@ def translate(
                     manual_toc=toc,
                     reporter=reporter,
                     translate_only=True,
+                    concurrency=concurrency,
                 )
             )
     except (NotImplementedError, ValueError) as exc:

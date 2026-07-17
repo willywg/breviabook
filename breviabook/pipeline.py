@@ -16,6 +16,7 @@ from pathlib import Path
 from breviabook.condense.chunker import Chunker, count_document_tokens
 from breviabook.condense.condenser import Condenser
 from breviabook.condense.synthesizer import Synthesizer, synthesized_to_document
+from breviabook.config import DEFAULT_CONCURRENCY
 from breviabook.images.selector import ImageSelector
 from breviabook.images.vision_ranker import VisionRanker
 from breviabook.ir.models import Document
@@ -231,12 +232,15 @@ async def condense_book(
     log: Log = _noop,
     reporter: ProgressReporter | None = None,
     translate_only: bool = False,
+    concurrency: int = DEFAULT_CONCURRENCY,
 ) -> CondenseResult:
     """Run the full condensation pipeline and write the requested output formats.
 
     When ``translate_only=True``, skips chunk→condense→synthesize and feeds the parsed
     ``Document`` directly to the :class:`Translator`, then runs ``ImageSelector`` and renders.
     """
+    if concurrency < 1:
+        raise ValueError("concurrency must be at least 1")
     if reporter is None:
         reporter = LogReporter(log) if log is not _noop else NullReporter()
     fmts = validate_formats(formats)
@@ -278,7 +282,7 @@ async def condense_book(
             checkpoint=tr_checkpoint,
         )
         working_doc = await translator.translate_document(
-            doc, on_progress=lambda _ch: reporter.advance()
+            doc, concurrency=concurrency, on_progress=lambda _ch: reporter.advance()
         )
         batches_reused = translator.reused_batches
         if translator.untranslated_units:
@@ -301,7 +305,10 @@ async def condense_book(
         reporter.phase("Condense", total=chunks_total)
         condenser = Condenser(provider, model, target_ratio)
         condensed = await condenser.condense(
-            chunks, checkpoint=checkpoint, on_progress=lambda _cc: reporter.advance()
+            chunks,
+            concurrency=concurrency,
+            checkpoint=checkpoint,
+            on_progress=lambda _cc: reporter.advance(),
         )
         chunks_reused_val = condenser.reused_chunks
         warnings.extend(
@@ -319,7 +326,10 @@ async def condense_book(
         reporter.phase("Synthesize", total=n_chapters)
         synthesizer = Synthesizer(provider, model, target_ratio)
         chapters = await synthesizer.synthesize(
-            condensed, checkpoint=checkpoint, on_progress=lambda _ch: reporter.advance()
+            condensed,
+            concurrency=concurrency,
+            checkpoint=checkpoint,
+            on_progress=lambda _ch: reporter.advance(),
         )
         chapters_reused_val = synthesizer.reused_chapters
         warnings.extend(
@@ -340,7 +350,7 @@ async def condense_book(
                 checkpoint=checkpoint,
             )
             working_doc = await translator.translate_document(
-                working_doc, on_progress=lambda _ch: reporter.advance()
+                working_doc, concurrency=concurrency, on_progress=lambda _ch: reporter.advance()
             )
             batches_reused = translator.reused_batches
             if translator.untranslated_units:
@@ -355,11 +365,15 @@ async def condense_book(
                 "--rank-images needs a vision-capable provider/model (e.g. gemini); "
                 f"{getattr(provider, 'name', 'provider')!r} does not support images."
             )
-        reporter.phase("Rank images", total=1)
         vision_ranker = VisionRanker(provider, model)
-        working_doc = await vision_ranker.rank(working_doc, checkpoint=run_checkpoint)
+        reporter.phase("Rank images", total=vision_ranker.rankable_count(working_doc))
+        working_doc = await vision_ranker.rank(
+            working_doc,
+            concurrency=concurrency,
+            checkpoint=run_checkpoint,
+            on_progress=lambda _verdict: reporter.advance(),
+        )
         images_reused_val = vision_ranker.reused_images
-        reporter.advance()
 
     selected = ImageSelector().select(working_doc)
     final_doc = selected.document

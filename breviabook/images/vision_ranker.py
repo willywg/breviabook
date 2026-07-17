@@ -12,10 +12,13 @@ includes the image bytes — degrades the collision to a cache-miss, never to a 
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
+from collections.abc import Callable
 
 from pydantic import BaseModel, Field, ValidationError
 
+from breviabook.config import DEFAULT_CONCURRENCY
 from breviabook.ir.models import (
     Block,
     Chapter,
@@ -73,30 +76,74 @@ class VisionRanker:
         self.update_captions = update_captions
         self.reused_images = 0
 
-    async def rank(self, doc: Document, *, checkpoint: CheckpointManager | None = None) -> Document:
-        chapters: list[Chapter] = []
-        for chapter in doc.chapters:
-            new_blocks: list[Block] = []
-            for index, block in enumerate(chapter.blocks):
+    @staticmethod
+    def rankable_count(doc: Document) -> int:
+        """Return the number of image blocks with an asset eligible for vision ranking."""
+        return sum(
+            1
+            for chapter in doc.chapters
+            for block in chapter.blocks
+            if isinstance(block, ImageBlock) and block.image_id in doc.images
+        )
+
+    async def rank(
+        self,
+        doc: Document,
+        *,
+        concurrency: int = DEFAULT_CONCURRENCY,
+        checkpoint: CheckpointManager | None = None,
+        on_progress: Callable[[Verdict], None] | None = None,
+    ) -> Document:
+        """Rank images concurrently while rebuilding the document in its original order."""
+        if concurrency < 1:
+            raise ValueError("concurrency must be at least 1")
+        work: list[tuple[int, int, ImageBlock, ImageAsset, str, str]] = []
+        for chapter_index, chapter in enumerate(doc.chapters):
+            for block_index, block in enumerate(chapter.blocks):
                 if isinstance(block, ImageBlock) and block.image_id in doc.images:
                     asset = doc.images[block.image_id]
-                    context = _surrounding_text(chapter.blocks, index, block.caption)
+                    context = _surrounding_text(chapter.blocks, block_index, block.caption)
                     source_hash = _image_fingerprint(
                         context, asset, self.model, self.threshold, self.update_captions
                     )
-                    verdict = self._cached_verdict(checkpoint, block.image_id, source_hash)
-                    if verdict is not None:
-                        self.reused_images += 1
-                    else:
-                        verdict = await self._rank(asset, context)
-                        if checkpoint is not None and verdict.parsed:
-                            checkpoint.record(
-                                f"img:{block.image_id}",
-                                {
-                                    "source_hash": source_hash,
-                                    "verdict": verdict.model_dump(mode="json"),
-                                },
-                            )
+                    work.append((chapter_index, block_index, block, asset, context, source_hash))
+
+        semaphore = asyncio.Semaphore(concurrency)
+
+        async def rank_one(
+            item: tuple[int, int, ImageBlock, ImageAsset, str, str],
+        ) -> Verdict:
+            _, _, block, asset, context, source_hash = item
+            verdict = self._cached_verdict(checkpoint, block.image_id, source_hash)
+            if verdict is not None:
+                self.reused_images += 1
+            else:
+                async with semaphore:
+                    verdict = await self._rank(asset, context)
+                if checkpoint is not None and verdict.parsed:
+                    checkpoint.record(
+                        f"img:{block.image_id}",
+                        {
+                            "source_hash": source_hash,
+                            "verdict": verdict.model_dump(mode="json"),
+                        },
+                    )
+            if on_progress is not None:
+                on_progress(verdict)
+            return verdict
+
+        # gather keeps the work-plan order even when calls complete out of order.
+        verdicts = await asyncio.gather(*(rank_one(item) for item in work))
+        verdict_at = {
+            (chapter_index, block_index): verdict
+            for (chapter_index, block_index, *_), verdict in zip(work, verdicts, strict=True)
+        }
+        chapters: list[Chapter] = []
+        for chapter_index, chapter in enumerate(doc.chapters):
+            new_blocks: list[Block] = []
+            for block_index, block in enumerate(chapter.blocks):
+                verdict = verdict_at.get((chapter_index, block_index))
+                if verdict is not None and isinstance(block, ImageBlock):
                     if verdict.keep:
                         caption = block.caption
                         if self.update_captions and verdict.caption:

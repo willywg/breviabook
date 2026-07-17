@@ -8,6 +8,7 @@ images already kept in Phase 4 are preserved verbatim — only prose runs go to 
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Callable
 from itertools import groupby
@@ -25,6 +26,7 @@ from breviabook.condense.common import (
 )
 from breviabook.condense.condenser import CondensedChunk
 from breviabook.condense.prompts import build_synthesize_messages
+from breviabook.config import DEFAULT_CONCURRENCY
 from breviabook.ir.models import Block, Chapter, Document, ParagraphBlock
 from breviabook.llm.base import LLMProvider
 from breviabook.persistence.checkpoint import CheckpointManager
@@ -77,13 +79,22 @@ class Synthesizer:
         self,
         condensed: list[CondensedChunk],
         *,
+        concurrency: int = DEFAULT_CONCURRENCY,
         checkpoint: CheckpointManager | None = None,
         on_progress: Callable[[SynthesizedChapter], None] | None = None,
     ) -> list[SynthesizedChapter]:
         """Synthesize each chapter, reusing checkpoint records whose fingerprint matches."""
-        results: list[SynthesizedChapter] = []
-        for chapter_index, group in groupby(condensed, key=lambda cc: cc.chapter_index):
-            chapter_chunks = list(group)
+        if concurrency < 1:
+            raise ValueError("concurrency must be at least 1")
+        groups = [
+            (chapter_index, list(group))
+            for chapter_index, group in groupby(condensed, key=lambda cc: cc.chapter_index)
+        ]
+        semaphore = asyncio.Semaphore(concurrency)
+
+        async def synthesize_one(
+            chapter_index: int, chapter_chunks: list[CondensedChunk]
+        ) -> SynthesizedChapter:
             source_hash = _chapter_fingerprint(
                 chapter_chunks,
                 self.model,
@@ -96,7 +107,8 @@ class Synthesizer:
             if sc is not None:
                 self.reused_chapters += 1
             else:
-                sc = await self.synthesize_chapter(chapter_chunks)
+                async with semaphore:
+                    sc = await self.synthesize_chapter(chapter_chunks)
                 # Only successful chapters are cacheable: a failed (unsmoothed) chapter must
                 # stay retryable — a resume is precisely the chance to retry it. A chapter
                 # whose smooth pass succeeded but whose trim passes degraded IS cached: the
@@ -106,10 +118,12 @@ class Synthesizer:
                         f"syn:{chapter_index}",
                         {"source_hash": source_hash, "chapter": sc.model_dump(mode="json")},
                     )
-            results.append(sc)
             if on_progress is not None:
-                on_progress(results[-1])
-        return results
+                on_progress(sc)
+            return sc
+
+        # gather preserves the first-seen chapter order despite out-of-order completion.
+        return list(await asyncio.gather(*(synthesize_one(*group) for group in groups)))
 
     @staticmethod
     def _cached_chapter(

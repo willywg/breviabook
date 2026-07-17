@@ -7,6 +7,7 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 from breviabook.cli import app
+from breviabook.config import DEFAULT_CONCURRENCY
 
 runner = CliRunner()
 FIXTURE = Path(__file__).parent / "fixtures" / "sample.epub"
@@ -88,3 +89,16 @@ def test_condense_dry_run_still_shows_compression() -> None:
     assert result.exit_code == 0
     assert "compression" in result.stdout
     assert "size change" not in result.stdout
+
+
+def test_commands_expose_concurrency_with_a_positive_default() -> None:
+    for command in ("condense", "translate"):
+        result = runner.invoke(app, [command, "--help"])
+        assert result.exit_code == 0
+        assert "--concurrency" in result.stdout
+        assert str(DEFAULT_CONCURRENCY) in result.stdout
+
+
+def test_concurrency_rejects_zero() -> None:
+    result = runner.invoke(app, ["condense", str(FIXTURE), "--concurrency", "0", "--dry-run"])
+    assert result.exit_code != 0

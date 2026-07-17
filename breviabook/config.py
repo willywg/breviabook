@@ -11,6 +11,8 @@ from enum import StrEnum
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+DEFAULT_CONCURRENCY = 4
+
 
 class ImageStrategy(StrEnum):
     """How images are kept in the condensed output (ROADMAP §7.1)."""

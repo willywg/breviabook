@@ -18,6 +18,7 @@ Shared segmentation/parsing primitives live in :mod:`breviabook.condense.common`
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Callable
 
@@ -34,6 +35,7 @@ from breviabook.condense.common import (
     structural_marker,
 )
 from breviabook.condense.prompts import build_condense_messages
+from breviabook.config import DEFAULT_CONCURRENCY
 from breviabook.ir.models import Block, Chapter, Document, ParagraphBlock
 from breviabook.llm.base import LLMProvider
 from breviabook.persistence.checkpoint import CheckpointManager
@@ -86,18 +88,23 @@ class Condenser:
         self,
         chunks: list[Chunk],
         *,
+        concurrency: int = DEFAULT_CONCURRENCY,
         checkpoint: CheckpointManager | None = None,
         on_progress: Callable[[CondensedChunk], None] | None = None,
     ) -> list[CondensedChunk]:
         """Condense every chunk, reusing checkpoint records whose fingerprint still matches."""
-        results: list[CondensedChunk] = []
-        for chunk in chunks:
+        if concurrency < 1:
+            raise ValueError("concurrency must be at least 1")
+        semaphore = asyncio.Semaphore(concurrency)
+
+        async def condense_one(chunk: Chunk) -> CondensedChunk:
             source_hash = _chunk_fingerprint(chunk, self.model, self.target_ratio)
             cc = self._cached_chunk(checkpoint, chunk.id, source_hash)
             if cc is not None:
                 self.reused_chunks += 1
             else:
-                cc = await self.condense_chunk(chunk)
+                async with semaphore:
+                    cc = await self.condense_chunk(chunk)
                 # Only successful chunks are cacheable: a failed (uncondensed) chunk must
                 # stay retryable — a resume is precisely the chance to retry it.
                 if checkpoint is not None and not cc.condense_failed:
@@ -105,10 +112,12 @@ class Condenser:
                         chunk.id,
                         {"source_hash": source_hash, "chunk": cc.model_dump(mode="json")},
                     )
-            results.append(cc)
             if on_progress is not None:
                 on_progress(cc)
-        return results
+            return cc
+
+        # gather preserves chunk order even when provider calls finish out of order.
+        return list(await asyncio.gather(*(condense_one(chunk) for chunk in chunks)))
 
     @staticmethod
     def _cached_chunk(

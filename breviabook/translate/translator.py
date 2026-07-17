@@ -14,8 +14,10 @@ so a resumed run reuses them instead of re-translating.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 
+from breviabook.config import DEFAULT_CONCURRENCY
 from breviabook.ir.models import (
     Block,
     Chapter,
@@ -110,14 +112,26 @@ class Translator:
         self,
         doc: Document,
         *,
+        concurrency: int = DEFAULT_CONCURRENCY,
         on_progress: Callable[[Chapter], None] | None = None,
     ) -> Document:
-        chapters: list[Chapter] = []
-        for idx, ch in enumerate(doc.chapters):
-            chapters.append(await self.translate_chapter(ch, chapter_index=idx))
+        """Translate chapters concurrently while retaining their document order."""
+        if concurrency < 1:
+            raise ValueError("concurrency must be at least 1")
+        semaphore = asyncio.Semaphore(concurrency)
+
+        async def translate_one(index: int, chapter: Chapter) -> Chapter:
+            async with semaphore:
+                translated = await self.translate_chapter(chapter, chapter_index=index)
             if on_progress is not None:
-                on_progress(chapters[-1])
-        return Document(metadata=doc.metadata, images=doc.images, chapters=chapters)
+                on_progress(translated)
+            return translated
+
+        # gather preserves the order of doc.chapters, not provider completion order.
+        chapters = await asyncio.gather(
+            *(translate_one(index, chapter) for index, chapter in enumerate(doc.chapters))
+        )
+        return Document(metadata=doc.metadata, images=doc.images, chapters=list(chapters))
 
     async def translate_chapter(self, chapter: Chapter, *, chapter_index: int = 0) -> Chapter:
         units: dict[str, str] = {}
