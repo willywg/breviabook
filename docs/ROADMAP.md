@@ -367,6 +367,6 @@ There are **two contagion channels** for AGPL, and both must be blocked:
 
 **Pre-publish checklist:**
 1. Safety `grep`: no BreviaBook file contains blocks copied from the reference repos.
-2. CI green: `pip-licenses --fail-on "GPL"` passes, confirming no dependency (direct or transitive) is GPL/AGPL.
+2. CI green: `pip-licenses --partial-match --fail-on "General Public License;GPL" --ignore-packages pyphen` passes, confirming no dependency (direct or transitive) is GPL/AGPL (`pyphen` ignored — MPL 1.1 elected from its tri-license).
 3. `LICENSE` exists with **Apache-2.0** and `NOTICE` with the inspiration attribution.
 4. The reference repos are not inside the project tree.
