@@ -169,6 +169,135 @@ async def test_checkpoint_resume_skips_provider(tmp_path: Path) -> None:
     assert resumed[0].blocks[0].text == first[0].blocks[0].text  # type: ignore[union-attr]
 
 
+async def test_resume_counts_reused_chunks(tmp_path: Path) -> None:
+    chunk = _chunk([ParagraphBlock(text="some text to condense")])
+    reply = json.dumps({"texts": {"1": "done"}, "essential_images": []})
+    cp = CheckpointManager(tmp_path / "job.jsonl")
+
+    c1 = Condenser(ScriptedProvider(reply), "m")
+    await c1.condense([chunk], checkpoint=cp)
+    assert c1.reused_chunks == 0
+
+    c2 = Condenser(BoomProvider(), "m")
+    await c2.condense([chunk], checkpoint=cp)
+    assert c2.reused_chunks == 1
+
+
+async def test_checkpoint_invalidated_by_model_change(tmp_path: Path) -> None:
+    chunk = _chunk([ParagraphBlock(text="some text to condense")])
+    reply = json.dumps({"texts": {"1": "done"}, "essential_images": []})
+    cp = CheckpointManager(tmp_path / "job.jsonl")
+    await Condenser(ScriptedProvider(reply), "model-a").condense([chunk], checkpoint=cp)
+
+    # Same chunk, different model — the cached output was produced by another model.
+    provider = ScriptedProvider(reply)
+    c2 = Condenser(provider, "model-b")
+    await c2.condense([chunk], checkpoint=cp)
+    assert provider.calls == 1
+    assert c2.reused_chunks == 0
+
+
+async def test_checkpoint_invalidated_by_ratio_change(tmp_path: Path) -> None:
+    chunk = _chunk([ParagraphBlock(text="some text to condense")])
+    reply = json.dumps({"texts": {"1": "done"}, "essential_images": []})
+    cp = CheckpointManager(tmp_path / "job.jsonl")
+    await Condenser(ScriptedProvider(reply), "m", 0.30).condense([chunk], checkpoint=cp)
+
+    provider = ScriptedProvider(reply)
+    c2 = Condenser(provider, "m", 0.50)
+    await c2.condense([chunk], checkpoint=cp)
+    assert provider.calls == 1
+    assert c2.reused_chunks == 0
+
+
+async def test_checkpoint_invalidated_by_content_change(tmp_path: Path) -> None:
+    # Chunk ids are positional (ch{i}-{n}), so a different chunking (--chunk-tokens) or a
+    # different book under the same input stem reuses ids — only the content hash tells
+    # them apart.
+    reply = json.dumps({"texts": {"1": "done"}, "essential_images": []})
+    cp = CheckpointManager(tmp_path / "job.jsonl")
+    first_chunk = _chunk([ParagraphBlock(text="original book text")])
+    await Condenser(ScriptedProvider(reply), "m").condense([first_chunk], checkpoint=cp)
+
+    other_chunk = _chunk([ParagraphBlock(text="a different book, same positional id")])
+    assert other_chunk.id == first_chunk.id
+    provider = ScriptedProvider(reply)
+    c2 = Condenser(provider, "m")
+    await c2.condense([other_chunk], checkpoint=cp)
+    assert provider.calls == 1
+    assert c2.reused_chunks == 0
+
+
+async def test_old_bare_format_record_is_recomputed(tmp_path: Path) -> None:
+    # Records written before fingerprints existed hold the CondensedChunk dump directly
+    # (no source_hash). They must be recomputed once, not crash and not be reused.
+    chunk = _chunk([ParagraphBlock(text="some text to condense")])
+    reply = json.dumps({"texts": {"1": "done"}, "essential_images": []})
+    cp = CheckpointManager(tmp_path / "job.jsonl")
+    legacy = await Condenser(ScriptedProvider(reply), "m").condense_chunk(chunk)
+    cp.record(chunk.id, legacy.model_dump(mode="json"))
+
+    provider = ScriptedProvider(reply)
+    c2 = Condenser(provider, "m")
+    await c2.condense([chunk], checkpoint=cp)
+    assert provider.calls == 1
+    assert c2.reused_chunks == 0
+    # The record has been rewritten in the fingerprinted shape.
+    assert "source_hash" in cp.get(chunk.id)  # type: ignore[operator]
+
+
+async def test_failed_chunk_not_checkpointed_and_retried_on_resume(tmp_path: Path) -> None:
+    chunk = _chunk([ParagraphBlock(text="please condense me")])
+    cp = CheckpointManager(tmp_path / "job.jsonl")
+
+    c1 = Condenser(ScriptedProvider("not json at all"), "m", max_retries=2)
+    failed = await c1.condense([chunk], checkpoint=cp)
+    assert failed[0].condense_failed is True
+    assert not cp.is_done(chunk.id)  # failures are never cached
+
+    # A resume is the chance to retry the transient failure.
+    good = json.dumps({"texts": {"1": "condensed ok"}, "essential_images": []})
+    provider = ScriptedProvider(good)
+    c2 = Condenser(provider, "m")
+    retried = await c2.condense([chunk], checkpoint=cp)
+    assert provider.calls == 1
+    assert retried[0].condense_failed is False
+    assert cp.is_done(chunk.id)
+
+
+async def test_corrupt_inner_payload_is_recomputed(tmp_path: Path) -> None:
+    # A record whose hash matches but whose chunk payload is broken (torn write, hand edit)
+    # is treated as stale, not as a hit.
+    from breviabook.condense.condenser import _chunk_fingerprint
+
+    chunk = _chunk([ParagraphBlock(text="some text to condense")])
+    cp = CheckpointManager(tmp_path / "job.jsonl")
+    cp.record(
+        chunk.id,
+        {
+            "source_hash": _chunk_fingerprint(chunk, "m", 0.30),
+            "chunk": {"id": chunk.id},  # missing required fields
+        },
+    )
+
+    reply = json.dumps({"texts": {"1": "done"}, "essential_images": []})
+    provider = ScriptedProvider(reply)
+    c = Condenser(provider, "m")
+    await c.condense([chunk], checkpoint=cp)
+    assert provider.calls == 1
+    assert c.reused_chunks == 0
+
+
+def test_chunk_fingerprint_is_order_sensitive() -> None:
+    from breviabook.condense.condenser import _chunk_fingerprint
+
+    a = ParagraphBlock(text="alpha")
+    b = ParagraphBlock(text="beta")
+    assert _chunk_fingerprint(_chunk([a, b]), "m", 0.3) != _chunk_fingerprint(
+        _chunk([b, a]), "m", 0.3
+    )
+
+
 async def test_assemble_condensed_document_groups_and_filters_images() -> None:
     condensed = [
         CondensedChunk(

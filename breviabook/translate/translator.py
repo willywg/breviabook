@@ -14,7 +14,6 @@ so a resumed run reuses them instead of re-translating.
 
 from __future__ import annotations
 
-import hashlib
 from collections.abc import Callable
 
 from breviabook.ir.models import (
@@ -28,6 +27,7 @@ from breviabook.ir.models import (
 )
 from breviabook.llm.base import LLMProvider, Message
 from breviabook.persistence.checkpoint import CheckpointManager
+from breviabook.persistence.fingerprint import Fingerprint
 from breviabook.translate.glossary import Glossary
 from breviabook.utils.htmlsan import inline_tag_signature, sanitize_inline, strip_tags
 from breviabook.utils.jsonx import extract_json_object
@@ -297,21 +297,14 @@ def _batch_fingerprint(
     cached translations — a stale checkpoint from ``--to Spanish`` is never reused for
     ``--to French``.
     """
-    h = hashlib.sha1(usedforsecurity=False)
-
-    # NUL-separate every field: without it, ("Spanish", None) and ("Span", "ish") would hash
-    # to the same digest and a French resume could reuse Spanish text.
-    def field(value: str) -> None:
-        h.update(value.encode("utf-8"))
-        h.update(b"\0")
-
-    field(target_lang)
-    field(source_lang or "")
-    field(glossary.prompt_block() if glossary and glossary.terms else "")
+    fp = Fingerprint()
+    fp.field(target_lang)
+    fp.field(source_lang or "")
+    fp.field(glossary.prompt_block() if glossary and glossary.terms else "")
     for uid, text in sorted(batch.items(), key=lambda x: x[0]):
-        field(uid)
-        field(text)
-    return h.hexdigest()
+        fp.field(uid)
+        fp.field(text)
+    return fp.hexdigest()
 
 
 def count_translatable_units(doc: Document) -> int:

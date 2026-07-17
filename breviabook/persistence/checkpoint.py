@@ -3,7 +3,11 @@
 Per-chunk results are appended to a JSONL file and flushed immediately, so an interrupted
 run loses at most the in-flight chunk. On restart, the manager reloads the file and the
 pipeline skips any chunk already recorded. The result payload is intentionally generic
-(``dict[str, object]``) — the condenser (Phase 4) defines its shape.
+(``dict[str, object]``); two fingerprinted shapes are in use (see
+:mod:`breviabook.persistence.fingerprint`):
+
+- condenser: ``{"source_hash": str, "chunk": <CondensedChunk dump>}``
+- translator: ``{"source_hash": str, "translations": {uid: text}}``
 
 These files are job state, not source — they are gitignored (``checkpoints/``, ``.breviabook/``).
 """

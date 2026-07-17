@@ -8,14 +8,20 @@ Design that keeps code safe and structure intact:
 - Images are kept/dropped by id based on the model's ``essential_images`` (§7.1).
 - If the condensed output is longer than the input, we flag it (§7.3, cognitivetech).
 
+Checkpoint records are fingerprinted (see :func:`_chunk_fingerprint`) so a ``--resume``
+after changing the model, the target ratio, the chunk size, or the book itself recomputes
+stale chunks instead of silently reusing them. Note: ``Chunk.prev_context`` does not reach
+the prompt today; if it ever does, it must join the fingerprint.
+
 Shared segmentation/parsing primitives live in :mod:`breviabook.condense.common`.
 """
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from breviabook.condense.chunker import Chunk
 from breviabook.condense.common import (
@@ -31,6 +37,7 @@ from breviabook.condense.prompts import build_condense_messages
 from breviabook.ir.models import Block, Chapter, Document, ParagraphBlock
 from breviabook.llm.base import LLMProvider
 from breviabook.persistence.checkpoint import CheckpointManager
+from breviabook.persistence.fingerprint import Fingerprint
 from breviabook.utils.tokens import block_tokens
 
 __all__ = [
@@ -73,6 +80,7 @@ class Condenser:
         # Models occasionally emit malformed JSON (more so with thinking disabled). Retry a
         # few times, then keep the chunk uncondensed rather than crash the whole book.
         self.max_retries = max_retries
+        self.reused_chunks = 0
 
     async def condense(
         self,
@@ -81,19 +89,47 @@ class Condenser:
         checkpoint: CheckpointManager | None = None,
         on_progress: Callable[[CondensedChunk], None] | None = None,
     ) -> list[CondensedChunk]:
-        """Condense every chunk, skipping any already recorded in ``checkpoint``."""
+        """Condense every chunk, reusing checkpoint records whose fingerprint still matches."""
         results: list[CondensedChunk] = []
         for chunk in chunks:
-            if checkpoint is not None and checkpoint.is_done(chunk.id):
-                cc = CondensedChunk.model_validate(checkpoint.get(chunk.id))
+            source_hash = _chunk_fingerprint(chunk, self.model, self.target_ratio)
+            cc = self._cached_chunk(checkpoint, chunk.id, source_hash)
+            if cc is not None:
+                self.reused_chunks += 1
             else:
                 cc = await self.condense_chunk(chunk)
-                if checkpoint is not None:
-                    checkpoint.record(chunk.id, cc.model_dump(mode="json"))
+                # Only successful chunks are cacheable: a failed (uncondensed) chunk must
+                # stay retryable — a resume is precisely the chance to retry it.
+                if checkpoint is not None and not cc.condense_failed:
+                    checkpoint.record(
+                        chunk.id,
+                        {"source_hash": source_hash, "chunk": cc.model_dump(mode="json")},
+                    )
             results.append(cc)
             if on_progress is not None:
                 on_progress(cc)
         return results
+
+    @staticmethod
+    def _cached_chunk(
+        checkpoint: CheckpointManager | None, chunk_id: str, source_hash: str
+    ) -> CondensedChunk | None:
+        """Return the cached chunk, or ``None`` to recompute it.
+
+        A record is reused only when its ``source_hash`` matches *and* the inner payload
+        validates as a :class:`CondensedChunk` — a torn or hand-edited record is treated
+        as stale. Old bare-format records (the chunk payload itself, no ``source_hash``)
+        fail the hash check and are recomputed once.
+        """
+        if checkpoint is None:
+            return None
+        payload = checkpoint.get(chunk_id)
+        if payload is None or payload.get("source_hash") != source_hash:
+            return None
+        try:
+            return CondensedChunk.model_validate(payload.get("chunk"))
+        except ValidationError:
+            return None
 
     async def condense_chunk(self, chunk: Chunk) -> CondensedChunk:
         segments = segment_blocks(chunk.blocks)
@@ -158,6 +194,23 @@ class Condenser:
             output_tokens=output_tokens,
             output_longer_than_input=output_tokens > chunk.token_count,
         )
+
+
+def _chunk_fingerprint(chunk: Chunk, model: str, target_ratio: float) -> str:
+    """SHA-1 over the model, the target ratio, and the chunk's ordered block content.
+
+    Any change that alters the condense output — a different model or ratio, a different
+    chunking (``--chunk-tokens``), or a different book under the same input stem (chunk ids
+    are positional) — changes the fingerprint, so a stale checkpoint record is recomputed
+    instead of silently reused. Blocks are hashed **in order**: the sequence is semantic,
+    unlike the translator's key-sorted unit batches.
+    """
+    fp = Fingerprint()
+    fp.field(model)
+    fp.field(repr(target_ratio))
+    blocks_dump = [b.model_dump(mode="json") for b in chunk.blocks]
+    fp.field(json.dumps(blocks_dump, sort_keys=True, ensure_ascii=False))
+    return fp.hexdigest()
 
 
 def _serialize(segments: list[Segment]) -> tuple[str, list[str]]:

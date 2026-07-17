@@ -290,14 +290,13 @@ async def condense_book(
         checkpoint = CheckpointManager(checkpoint_path)
         if not resume:
             checkpoint.clear()
-        reused_before = len(checkpoint.results())
-        chunks_reused_val = reused_before
 
         reporter.phase("Condense", total=chunks_total)
         condenser = Condenser(provider, model, target_ratio)
         condensed = await condenser.condense(
             chunks, checkpoint=checkpoint, on_progress=lambda _cc: reporter.advance()
         )
+        chunks_reused_val = condenser.reused_chunks
         warnings.extend(
             f"chunk {cc.id}: condensed output longer than input"
             for cc in condensed

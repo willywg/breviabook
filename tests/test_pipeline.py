@@ -73,28 +73,73 @@ async def test_unsupported_input_raises(tmp_path: Path) -> None:
         )
 
 
-async def test_resume_skips_provider_for_done_chunks(tmp_path: Path) -> None:
-    cp_path = tmp_path / ".breviabook" / "sample-condensed.jsonl"
+class PhaseAwareProvider:
+    """Counts condense-phase calls separately (synthesis still runs on resume)."""
 
-    provider = ScriptedProvider(_REPLY)
+    name = "phase-aware"
+
+    def __init__(self) -> None:
+        self.condense_calls = 0
+
+    async def generate(self, messages: list[Message], model: str, **opts: object) -> str:
+        if messages[-1]["content"].startswith("Condense the following book excerpt"):
+            self.condense_calls += 1
+        return _REPLY
+
+
+async def test_resume_skips_provider_for_done_chunks(tmp_path: Path) -> None:
+    # Real end-to-end resume: two full condense_book calls, the second with resume=True.
+    provider1 = PhaseAwareProvider()
+    result1 = await condense_book(
+        input_path=FIXTURE,
+        out_dir=tmp_path,
+        formats=["md"],
+        provider=provider1,
+        model="m",
+        resume=False,
+    )
+    assert result1.chunks_total > 0
+    assert provider1.condense_calls == result1.chunks_total
+    assert result1.chunks_reused == 0
+
+    provider2 = PhaseAwareProvider()
+    result2 = await condense_book(
+        input_path=FIXTURE,
+        out_dir=tmp_path,
+        formats=["md"],
+        provider=provider2,
+        model="m",
+        resume=True,
+    )
+    assert provider2.condense_calls == 0  # every chunk came from the checkpoint
+    assert result2.chunks_reused == result2.chunks_total
+
+
+async def test_resume_with_changed_target_ratio_recomputes(tmp_path: Path) -> None:
+    provider1 = PhaseAwareProvider()
     await condense_book(
         input_path=FIXTURE,
         out_dir=tmp_path,
         formats=["md"],
-        provider=provider,
+        provider=provider1,
         model="m",
+        target_ratio=0.30,
         resume=False,
     )
-    condense_calls = provider.calls
-    assert condense_calls > 0
-    assert cp_path.exists()
 
-    # Resume: condensation must not re-call the provider (synthesis still may run,
-    # so use a provider that returns the same reply and assert no NEW condense work
-    # by checking the checkpoint is fully reused).
-    cp = CheckpointManager(cp_path)
-    done_before = len(cp.results())
-    assert done_before > 0
+    # Resume with a different ratio: the fingerprint invalidates every record.
+    provider2 = PhaseAwareProvider()
+    result2 = await condense_book(
+        input_path=FIXTURE,
+        out_dir=tmp_path,
+        formats=["md"],
+        provider=provider2,
+        model="m",
+        target_ratio=0.50,
+        resume=True,
+    )
+    assert result2.chunks_reused == 0
+    assert provider2.condense_calls == result2.chunks_total
 
 
 async def test_fresh_run_clears_stale_checkpoint(tmp_path: Path) -> None:
