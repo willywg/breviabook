@@ -17,7 +17,7 @@ import re
 import zipfile
 from pathlib import Path
 
-from breviabook.ir.models import Chapter, Document
+from breviabook.ir.models import Chapter, Document, ImageBlock
 from breviabook.render.base import image_filename
 from breviabook.render.html import block_to_html
 from breviabook.render.html import esc as _esc
@@ -66,14 +66,29 @@ class EpubRenderer:
             mid = _xml_id(f"img-{image_id}", used_ids)
             image_entries[image_id] = (mid, f"images/{filename}", filename)
 
+        cover_image_id = doc.metadata.cover_image_id
+        cover_entry = image_entries.get(cover_image_id) if cover_image_id else None
+        # Avoid duplicating a spine chapter that is only the cover image (we emit cover.xhtml).
+        source_chapters = _chapters_without_leading_cover(doc.chapters, cover_image_id)
+
         chapters = []
-        for index, chapter in enumerate(doc.chapters, 1):
+        for index, chapter in enumerate(source_chapters, 1):
             cid = _xml_id(f"chap-{index}", used_ids)
             href = f"chap-{index}.xhtml"
             xhtml = self._chapter_xhtml(chapter.title or doc.metadata.title, chapter, image_entries)
             chapters.append((cid, href, chapter.title or f"Chapter {index}", xhtml))
 
-        opf = self._build_opf(doc, chapters, image_entries)
+        cover_page: tuple[str, str, str] | None = None  # (id, href, xhtml)
+        if cover_entry is not None:
+            cover_cid = _xml_id("cover-page", used_ids)
+            cover_href = "cover.xhtml"
+            cover_page = (
+                cover_cid,
+                cover_href,
+                self._cover_xhtml(cover_entry[1]),
+            )
+
+        opf = self._build_opf(doc, chapters, image_entries, cover_page, cover_entry)
         nav = self._build_nav(chapters)
 
         with zipfile.ZipFile(out_file, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -82,6 +97,8 @@ class EpubRenderer:
             zf.writestr("META-INF/container.xml", _CONTAINER_XML)
             zf.writestr("OEBPS/content.opf", opf)
             zf.writestr("OEBPS/nav.xhtml", nav)
+            if cover_page is not None:
+                zf.writestr(f"OEBPS/{cover_page[1]}", cover_page[2])
             for _cid, href, _title, xhtml in chapters:
                 zf.writestr(f"OEBPS/{href}", xhtml)
             for image_id, (_mid, archive_href, _name) in image_entries.items():
@@ -105,6 +122,17 @@ class EpubRenderer:
             f"<body>\n{body}\n</body>\n</html>\n"
         )
 
+    def _cover_xhtml(self, image_href: str) -> str:
+        """Minimal cover document — full-bleed image for readers that open spine[0]."""
+        return (
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<html xmlns="http://www.w3.org/1999/xhtml">\n'
+            "<head><title>Cover</title>"
+            "<style>body{margin:0;text-align:center;}img{max-width:100%;height:auto;}</style>"
+            "</head>\n"
+            f'<body>\n<img src="{_esc(image_href)}" alt="Cover"/>\n</body>\n</html>\n'
+        )
+
     # -- OPF / nav ------------------------------------------------------------ #
 
     def _build_opf(
@@ -112,22 +140,36 @@ class EpubRenderer:
         doc: Document,
         chapters: list[tuple[str, str, str, str]],
         image_entries: dict[str, tuple[str, str, str]],
+        cover_page: tuple[str, str, str] | None,
+        cover_entry: tuple[str, str, str] | None,
     ) -> str:
         meta = doc.metadata
         ident = "urn:breviabook:" + hashlib.sha256(meta.title.encode("utf-8")).hexdigest()[:16]
         lang = meta.language or "en"
         creator = f"\n    <dc:creator>{_esc(meta.author)}</dc:creator>" if meta.author else ""
+        cover_meta = ""
+        if cover_entry is not None:
+            cover_meta = f'\n    <meta name="cover" content="{cover_entry[0]}"/>'
 
         manifest = [
             '<item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>'
         ]
+        if cover_page is not None:
+            cid, href, _xhtml = cover_page
+            manifest.append(f'<item id="{cid}" href="{href}" media-type="application/xhtml+xml"/>')
         for cid, href, _title, _xhtml in chapters:
             manifest.append(f'<item id="{cid}" href="{href}" media-type="application/xhtml+xml"/>')
+        cover_mid = cover_entry[0] if cover_entry is not None else None
         for image_id, (mid, href, _name) in image_entries.items():
             mime = _esc(doc.images[image_id].mime or "application/octet-stream")
-            manifest.append(f'<item id="{mid}" href="{href}" media-type="{mime}"/>')
+            props = ' properties="cover-image"' if mid == cover_mid else ""
+            manifest.append(f'<item id="{mid}" href="{href}" media-type="{mime}"{props}/>')
 
-        spine = "".join(f'<itemref idref="{cid}"/>' for cid, _h, _t, _x in chapters)
+        spine_parts: list[str] = []
+        if cover_page is not None:
+            spine_parts.append(f'<itemref idref="{cover_page[0]}"/>')
+        spine_parts.extend(f'<itemref idref="{cid}"/>' for cid, _h, _t, _x in chapters)
+        spine = "".join(spine_parts)
         manifest_xml = "\n    ".join(manifest)
         return (
             '<?xml version="1.0" encoding="UTF-8"?>\n'
@@ -136,7 +178,7 @@ class EpubRenderer:
             '  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">\n'
             f'    <dc:identifier id="bookid">{ident}</dc:identifier>\n'
             f"    <dc:title>{_esc(meta.title)}</dc:title>\n"
-            f"    <dc:language>{_esc(lang)}</dc:language>{creator}\n"
+            f"    <dc:language>{_esc(lang)}</dc:language>{creator}{cover_meta}\n"
             f'    <meta property="dcterms:modified">{_MODIFIED}</meta>\n'
             "  </metadata>\n"
             f"  <manifest>\n    {manifest_xml}\n  </manifest>\n"
@@ -172,3 +214,19 @@ def _unique_name(name: str, used: set[str]) -> str:
         if candidate not in used:
             used.add(candidate)
             return candidate
+
+
+def _chapters_without_leading_cover(
+    chapters: list[Chapter], cover_image_id: str | None
+) -> list[Chapter]:
+    """Drop a leading cover-only chapter when we will emit ``cover.xhtml`` ourselves."""
+    if not cover_image_id or not chapters:
+        return chapters
+    first = chapters[0]
+    if (
+        len(first.blocks) == 1
+        and isinstance(first.blocks[0], ImageBlock)
+        and first.blocks[0].image_id == cover_image_id
+    ):
+        return chapters[1:]
+    return chapters

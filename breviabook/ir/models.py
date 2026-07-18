@@ -112,6 +112,9 @@ class DocumentMetadata(BaseModel):
     author: str | None = None
     language: str | None = None
     source_format: str  # "epub" | "pdf"
+    # Manifest/image id of the book cover (from OPF meta name="cover"); renderers emit OPF
+    # cover-image + cover.xhtml. None when the source has no declared cover.
+    cover_image_id: str | None = None
 
 
 class Chapter(BaseModel):

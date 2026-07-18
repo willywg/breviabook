@@ -61,6 +61,9 @@ class ImageSelector:
                 # Inline images live inside a block's rich HTML, not as ImageBlocks — count them
                 # as referenced too, or Strategy A would prune their assets as unused.
                 referenced.update(_inline_ids(block))
+        # Cover is declared on metadata, not necessarily as an ImageBlock — keep it (F2).
+        if doc.metadata.cover_image_id:
+            referenced.add(doc.metadata.cover_image_id)
         kept = sorted(iid for iid in doc.images if iid in referenced)
         dropped = sorted(iid for iid in doc.images if iid not in referenced)
 

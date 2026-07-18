@@ -70,7 +70,7 @@ class EpubParser:
         with zipfile.ZipFile(path) as zf:
             opf_path = self._find_opf(zf)
             opf_xml = zf.read(opf_path)
-            metadata, manifest, spine = self._parse_opf(opf_xml)
+            metadata, manifest, spine, cover_ref = self._parse_opf(opf_xml)
             class_styles = self._load_class_styles(manifest, opf_path, zf)
 
             images: dict[str, ImageAsset] = {}
@@ -87,6 +87,20 @@ class EpubParser:
                 chapters.append(
                     self._parse_chapter(raw, href, opf_path, manifest, zf, images, class_styles)
                 )
+
+            # OPF cover may not appear in any spine XHTML — load + mark it explicitly (F2).
+            if cover_ref is not None and cover_ref in manifest:
+                cover_href, _cover_mime = manifest[cover_ref]
+                try:
+                    cover_path = resolve_archive_href(opf_path, cover_href)
+                except ValueError:
+                    cover_path = None
+                if cover_path is not None:
+                    cover_id = self._register_asset(
+                        cover_path, "Cover", manifest, opf_path, zf, images
+                    )
+                    if cover_id is not None:
+                        metadata = metadata.model_copy(update={"cover_image_id": cover_id})
 
         return Document(metadata=metadata, images=images, chapters=chapters)
 
@@ -106,9 +120,10 @@ class EpubParser:
 
     def _parse_opf(
         self, opf_xml: bytes
-    ) -> tuple[DocumentMetadata, dict[str, tuple[str, str]], list[str]]:
+    ) -> tuple[DocumentMetadata, dict[str, tuple[str, str]], list[str], str | None]:
         root = etree.fromstring(opf_xml)
         title, author, language = "Untitled", None, None
+        cover_manifest_id: str | None = None
         manifest: dict[str, tuple[str, str]] = {}  # id -> (href, media_type)
         spine: list[str] = []
 
@@ -120,6 +135,12 @@ class EpubParser:
                 author = el.text.strip()
             elif name == "language" and el.text:
                 language = el.text.strip()
+            elif name == "meta":
+                # EPUB2-style cover pointer: <meta name="cover" content="{manifest-id}"/>
+                if el.get("name") == "cover":
+                    content = el.get("content")
+                    if isinstance(content, str) and content.strip():
+                        cover_manifest_id = content.strip()
             elif name == "item":
                 item_id, href, mtype = el.get("id"), el.get("href"), el.get("media-type")
                 if item_id and href:
@@ -129,7 +150,7 @@ class EpubParser:
                 if idref:
                     spine.append(str(idref))
         meta = DocumentMetadata(title=title, author=author, language=language, source_format="epub")
-        return meta, manifest, spine
+        return meta, manifest, spine, cover_manifest_id
 
     def _load_class_styles(
         self, manifest: dict[str, tuple[str, str]], opf_path: str, zf: zipfile.ZipFile
