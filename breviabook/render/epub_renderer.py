@@ -19,7 +19,7 @@ from pathlib import Path
 
 from breviabook.ir.models import Chapter, Document, ImageBlock
 from breviabook.render.base import image_filename
-from breviabook.render.html import block_to_html
+from breviabook.render.html import block_to_html, collect_anchor_locations
 from breviabook.render.html import esc as _esc
 
 _MODIFIED = "2026-01-01T00:00:00Z"  # fixed for deterministic output
@@ -71,11 +71,20 @@ class EpubRenderer:
         # Avoid duplicating a spine chapter that is only the cover image (we emit cover.xhtml).
         source_chapters = _chapters_without_leading_cover(doc.chapters, cover_image_id)
 
+        # Anchor locations must use the same post-dedupe chapter list as chap-{n}.xhtml (F2).
+        anchor_locations = collect_anchor_locations(source_chapters)
+
         chapters = []
         for index, chapter in enumerate(source_chapters, 1):
             cid = _xml_id(f"chap-{index}", used_ids)
             href = f"chap-{index}.xhtml"
-            xhtml = self._chapter_xhtml(chapter.title or doc.metadata.title, chapter, image_entries)
+            xhtml = self._chapter_xhtml(
+                chapter.title or doc.metadata.title,
+                chapter,
+                image_entries,
+                index,
+                anchor_locations,
+            )
             chapters.append((cid, href, chapter.title or f"Chapter {index}", xhtml))
 
         cover_page: tuple[str, str, str] | None = None  # (id, href, xhtml)
@@ -108,13 +117,26 @@ class EpubRenderer:
     # -- XHTML ---------------------------------------------------------------- #
 
     def _chapter_xhtml(
-        self, title: str, chapter: Chapter, image_entries: dict[str, tuple[str, str, str]]
+        self,
+        title: str,
+        chapter: Chapter,
+        image_entries: dict[str, tuple[str, str, str]],
+        chapter_index: int,
+        anchor_locations: dict[str, int],
     ) -> str:
         def image_src(image_id: str) -> str | None:
             entry = image_entries.get(image_id)
             return entry[1] if entry is not None else None
 
-        body = "\n".join(block_to_html(b, image_src) for b in chapter.blocks)
+        def ref_resolve(anchor_id: str) -> str | None:
+            loc = anchor_locations.get(anchor_id)
+            if loc is None:
+                return None
+            if loc == chapter_index:
+                return f"#{anchor_id}"
+            return f"chap-{loc}.xhtml#{anchor_id}"
+
+        body = "\n".join(block_to_html(b, image_src, ref_resolve) for b in chapter.blocks)
         return (
             '<?xml version="1.0" encoding="UTF-8"?>\n'
             '<html xmlns="http://www.w3.org/1999/xhtml">\n'

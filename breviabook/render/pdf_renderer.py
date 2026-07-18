@@ -14,7 +14,7 @@ import base64
 from pathlib import Path
 
 from breviabook.ir.models import Document, HeadingBlock
-from breviabook.render.html import block_to_html, esc
+from breviabook.render.html import block_to_html, collect_anchor_locations, esc
 
 _CSS = """
 @page { margin: 2cm; }
@@ -42,9 +42,14 @@ def _data_uri(mime: str, data: bytes) -> str:
 def build_html(doc: Document) -> str:
     """Build a self-contained HTML document (images inlined) from the IR. Deterministic."""
     data_uris = {iid: _data_uri(asset.mime, asset.data) for iid, asset in doc.images.items()}
+    # PDF is one HTML document — all in-book refs are same-document fragments.
+    surviving = set(collect_anchor_locations(doc.chapters))
 
     def image_src(image_id: str) -> str | None:
         return data_uris.get(image_id)
+
+    def ref_resolve(anchor_id: str) -> str | None:
+        return f"#{anchor_id}" if anchor_id in surviving else None
 
     parts: list[str] = []
     if doc.metadata.title:
@@ -55,7 +60,7 @@ def build_html(doc: Document) -> str:
         if chapter.title and not first_is_heading:
             parts.append(f"<h2>{esc(chapter.title)}</h2>")
         for block in chapter.blocks:
-            parts.append(block_to_html(block, image_src))
+            parts.append(block_to_html(block, image_src, ref_resolve))
         parts.append("</section>")
     body = "\n".join(parts)
     return (

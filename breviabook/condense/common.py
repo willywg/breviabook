@@ -114,7 +114,14 @@ def parse_condensed_run(raw: object | None, source_blocks: list[Block]) -> list[
             raise CondenseError("structured run requires JSON array response, got string")
         if not all(isinstance(block, ParagraphBlock) for block in source_blocks):
             raise CondenseError("structured run requires JSON array response, got string")
-        return [ParagraphBlock(text=para) for para in split_paragraphs(raw)]
+        paras = split_paragraphs(raw)
+        # 1→1 only: copy presentation/anchor shell. Divergent merge/split drops shell attrs
+        # (better unwrap a lost anchor at render than invent a wrong target).
+        if len(source_blocks) == 1 and len(paras) == 1:
+            src = source_blocks[0]
+            assert isinstance(src, ParagraphBlock)
+            return [ParagraphBlock(text=paras[0], align=src.align, anchor_id=src.anchor_id)]
+        return [ParagraphBlock(text=para) for para in paras]
 
     if isinstance(raw, list):
         if len(raw) != len(source_blocks):
@@ -138,7 +145,7 @@ def _parse_block_entry(entry: object, source: Block) -> Block:
     if isinstance(source, ParagraphBlock):
         text = _paragraph_text(entry)
         # Preserve presentation shell from source (LLM only returns content).
-        return ParagraphBlock(text=text, align=source.align)
+        return ParagraphBlock(text=text, align=source.align, anchor_id=source.anchor_id)
     if isinstance(source, ListBlock):
         return _parse_list_entry(entry, source)
     if isinstance(source, QuoteBlock):
@@ -174,6 +181,7 @@ def _parse_list_entry(entry: object, source: ListBlock) -> ListBlock:
         ordered=source.ordered,
         marker_type=source.marker_type,
         marker_color=source.marker_color,
+        anchor_id=source.anchor_id,
     )
 
 
@@ -183,7 +191,7 @@ def _parse_quote_entry(entry: object, source: QuoteBlock) -> QuoteBlock:
     raw = entry.get("text")
     if not isinstance(raw, str) or not raw.strip():
         raise CondenseError("quote block missing text")
-    return QuoteBlock(text=raw.strip(), align=source.align)
+    return QuoteBlock(text=raw.strip(), align=source.align, anchor_id=source.anchor_id)
 
 
 def structural_marker(block: Block | None) -> str:

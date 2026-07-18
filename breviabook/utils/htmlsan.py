@@ -12,10 +12,14 @@ Allowlist (everything else is unwrapped to its text):
 
     <em> <strong> <a href> <code> <sup> <sub> <s> <span style="color:…"> <br/>
 
-produced from ``<i>/<em>``, ``<b>/<strong>``, ``<a>`` (http/https/mailto only), inline ``<code>``,
-``<sup>/<sub>``, ``<s>/<strike>/<del>``/``line-through``, ``color`` set inline or via a class,
-and void ``<br>`` (preserved as ``<br/>`` in ``rich``; ``strip_tags`` maps it to a space so the
-plain ``text`` projection for condensation is unchanged).
+produced from ``<i>/<em>``, ``<b>/<strong>``, ``<a>`` (http/https/mailto, or opaque ``bbref:``
+after the parser remaps in-book links), inline ``<code>``, ``<sup>/<sub>``,
+``<s>/<strike>/<del>``/``line-through``, ``color`` set inline or via a class, and void ``<br>``
+(preserved as ``<br/>`` in ``rich``; ``strip_tags`` maps it to a space so the plain ``text``
+projection for condensation is unchanged).
+
+In-book ``#frag`` / relative XHTML hrefs are **not** allowlisted here — the EPUB parser rewrites
+them to ``bbref:{anchor_id}`` first. ``_SAFE_LINK_SCHEMES`` stays external-only.
 """
 
 from __future__ import annotations
@@ -35,6 +39,8 @@ ClassStyles = dict[str, dict[str, str]]
 # Given an inline ``<img>`` tag, register its asset and return the ``image_id`` (or None to drop).
 # Supplied by the parser; at translation time no resolver is used and existing ids are kept.
 ImgResolver = Callable[[Tag], "str | None"]
+# Rewrite a raw ``href`` to a safe value (external or ``bbref:…``), or None to unwrap the ``<a>``.
+HrefResolver = Callable[[str], "str | None"]
 
 Align = Literal["left", "center", "right"]
 MarkerType = Literal["disc", "circle", "square", "none"]
@@ -44,6 +50,8 @@ _ITALIC_TAGS = {"i", "em"}
 _BOLD_TAGS = {"b", "strong"}
 _STRIKE_TAGS = {"s", "strike", "del"}
 _SAFE_LINK_SCHEMES = ("http://", "https://", "mailto:")
+# Opaque in-book refs produced by the EPUB parser (F1). Not added to _SAFE_LINK_SCHEMES.
+_BBREF_RE = re.compile(r"^bbref:[A-Za-z][A-Za-z0-9_-]*$")
 # Tags whose text content is dropped entirely (never surfaced, even as inert text).
 _DROP_CONTENT = {"script", "style", "head", "title", "iframe", "object", "embed"}
 
@@ -162,14 +170,21 @@ def _effective_styles(node: Tag, class_styles: ClassStyles) -> dict[str, str]:
     return eff
 
 
-def _safe_href(node: Tag) -> str | None:
-    href = node.get("href")
-    if isinstance(href, str) and href.lower().startswith(_SAFE_LINK_SCHEMES):
+def _safe_href_value(href: str) -> str | None:
+    """Accept external schemes or opaque ``bbref:`` — never bare ``#`` / relative paths."""
+    if href.lower().startswith(_SAFE_LINK_SCHEMES):
+        return href
+    if _BBREF_RE.fullmatch(href):
         return href
     return None
 
 
-def _wrap(inner: str, node: Tag, class_styles: ClassStyles) -> str:
+def _wrap(
+    inner: str,
+    node: Tag,
+    class_styles: ClassStyles,
+    href_resolver: HrefResolver | None,
+) -> str:
     """Wrap already-sanitized ``inner`` in the semantic tags this node implies (fixed order)."""
     if not inner:
         return ""
@@ -190,9 +205,13 @@ def _wrap(inner: str, node: Tag, class_styles: ClassStyles) -> str:
     if "color" in eff:
         inner = f'<span style="color:{esc(eff["color"])}">{inner}</span>'
     if name == "a":
-        href = _safe_href(node)
-        if href:
-            inner = f'<a href="{esc(href)}">{inner}</a>'
+        raw = node.get("href")
+        if isinstance(raw, str):
+            candidate = href_resolver(raw) if href_resolver is not None else raw
+            if candidate is not None:
+                safe = _safe_href_value(candidate)
+                if safe is not None:
+                    inner = f'<a href="{esc(safe)}">{inner}</a>'
     return inner
 
 
@@ -212,7 +231,10 @@ def _render_img(node: Tag, img_resolver: ImgResolver | None) -> str:
 
 
 def _render_child(
-    node: PageElement, class_styles: ClassStyles, img_resolver: ImgResolver | None
+    node: PageElement,
+    class_styles: ClassStyles,
+    img_resolver: ImgResolver | None,
+    href_resolver: HrefResolver | None,
 ) -> str:
     if isinstance(node, NavigableString):
         return esc(_WS_RE.sub(" ", str(node)))
@@ -224,8 +246,10 @@ def _render_child(
             return "<br/>"
         if name == "img":
             return _render_img(node, img_resolver)
-        inner = "".join(_render_child(c, class_styles, img_resolver) for c in node.children)
-        return _wrap(inner, node, class_styles)
+        inner = "".join(
+            _render_child(c, class_styles, img_resolver, href_resolver) for c in node.children
+        )
+        return _wrap(inner, node, class_styles, href_resolver)
     return ""
 
 
@@ -233,13 +257,39 @@ def sanitize_inline(
     source: Tag | str,
     class_styles: ClassStyles | None = None,
     img_resolver: ImgResolver | None = None,
+    href_resolver: HrefResolver | None = None,
 ) -> str:
     """Return normalized, sanitized inline HTML for ``source`` (a BS4 element or a raw string)."""
     cs = class_styles or {}
     if isinstance(source, str):
         source = BeautifulSoup(source, "html.parser")
-    inner = "".join(_render_child(c, cs, img_resolver) for c in source.children)
+    inner = "".join(_render_child(c, cs, img_resolver, href_resolver) for c in source.children)
     return _WS_RE.sub(" ", inner).strip()
+
+
+def rewrite_bbrefs(rich: str, resolve: Callable[[str], str | None] | None) -> str:
+    """Rewrite ``bbref:{id}`` hrefs via ``resolve``, or unwrap the ``<a>`` when unresolved.
+
+    ``resolve`` maps an opaque anchor id (without the ``bbref:`` prefix) to an output href, or
+    ``None`` to unwrap. When ``resolve`` itself is ``None``, every ``bbref:`` link is unwrapped
+    (never leave ``bbref:`` in rendered output).
+    """
+    soup = BeautifulSoup(rich, "html.parser")
+    changed = False
+    for tag in list(soup.find_all("a")):
+        href = tag.get("href")
+        if not isinstance(href, str) or not href.startswith("bbref:"):
+            continue
+        aid = href.removeprefix("bbref:")
+        new_href = resolve(aid) if resolve is not None else None
+        if new_href is None:
+            tag.unwrap()
+        else:
+            tag["href"] = new_href
+        changed = True
+    if not changed:
+        return rich
+    return soup.decode_contents()
 
 
 def contains_markup(rich: str) -> bool:

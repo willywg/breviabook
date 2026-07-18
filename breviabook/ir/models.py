@@ -37,6 +37,8 @@ class HeadingBlock(BaseModel):
     text: str
     rich: str | None = None
     align: Align | None = None
+    # Opaque in-book target id (e.g. "a1"); renderers emit id= and rewrite bbref: links (F1).
+    anchor_id: str | None = None
 
 
 class ParagraphBlock(BaseModel):
@@ -44,6 +46,7 @@ class ParagraphBlock(BaseModel):
     text: str
     rich: str | None = None
     align: Align | None = None
+    anchor_id: str | None = None
 
 
 class CodeBlock(BaseModel):
@@ -72,6 +75,7 @@ class QuoteBlock(BaseModel):
     text: str
     rich: str | None = None
     align: Align | None = None
+    anchor_id: str | None = None
 
 
 class ListBlock(BaseModel):
@@ -83,6 +87,7 @@ class ListBlock(BaseModel):
     marker_type: MarkerType | None = None
     # Safe CSS color for the bullet/number; renderers emit ``li::marker`` only (never ``ul`` color).
     marker_color: str | None = None
+    anchor_id: str | None = None
 
 
 Block = Annotated[

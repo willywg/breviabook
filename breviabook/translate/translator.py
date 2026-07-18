@@ -67,6 +67,7 @@ Rules:
 - Some segments contain inline HTML tags (<em>, <strong>, <a>, <code>, <span>, <sup>, <sub>, <s>,
   <br/>). Keep every tag and its attributes exactly as written; translate only the visible text
   between tags. Do not add, remove, reorder, or re-nest tags. Preserve <br/> line breaks.
+  Href values of the form bbref:… are structural in-book anchors — copy them unchanged.
 - Do not add or remove segments; translate each one.
 {glossary_block}
 Return ONLY a JSON object (no prose, no fences) of the form:

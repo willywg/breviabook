@@ -5,6 +5,8 @@ Image assets are written to disk and referenced with relative links.
 
 Block presentation (``align``, ``marker_type``, ``marker_color``) is not expressible in MD and
 is intentionally dropped — inline ``rich`` still converts to Markdown/GFM where possible.
+In-book ``bbref:`` links are unwrapped to plain inner text (MD cannot emit matching block
+``id=`` attributes, so ``[text](#id)`` would dangle).
 """
 
 from __future__ import annotations
@@ -60,6 +62,9 @@ def _node_md(node: PageElement, image_links: dict[str, str]) -> str:
         return f"`{node.get_text()}`"
     if name == "a":
         href = node.get("href")
+        # In-book bbref: cannot get a matching block id= in MD — unwrap (never dangling #frag).
+        if isinstance(href, str) and href.startswith("bbref:"):
+            return inner
         return f"[{inner}]({href})" if isinstance(href, str) else inner
     # <span style=color>, <s>, <sup>, <sub>: GFM renders inline HTML — keep it verbatim.
     return str(node)

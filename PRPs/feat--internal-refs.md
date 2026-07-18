@@ -132,8 +132,8 @@ archive_path → anchor_id                 # chapter-only href (no #frag) → fi
 | IR after parse | `<a href="bbref:{anchor_id}">…</a>` |
 | EPUB render | `chap-{n}.xhtml#{anchor_id}` or `#{anchor_id}` if same chapter |
 | PDF HTML | `#{anchor_id}` (single document) |
-| MD | `[text](#{anchor_id})` if target exists; else bare inner text |
-| Missing target | unwrap `<a>`, keep inner (`<sup>`, `<strong>`, …) — no href |
+| MD | **always unwrap** `bbref:` `<a>` to inner text — MD cannot emit block `id=` on arbitrary paragraphs, so `[text](#id)` would be a dangling frag (forbidden) |
+| Missing target (EPUB/PDF) | unwrap `<a>`, keep inner (`<sup>`, `<strong>`, …) — no href |
 
 ### `bbref:` validation (htmlsan)
 
@@ -244,7 +244,8 @@ Ordered; one implementation commit after gates.
    pass chapter-aware resolve into `block_to_html` / `_inline` (signature may grow an
    optional `ref_resolve` alongside `image_src`).
 7. `breviabook/render/pdf_renderer.py` / `build_html` — same with `#{id}` resolve.
-8. `breviabook/render/md_renderer.py` — resolve or unwrap in `_node_md` / `_inline_md`.
+8. `breviabook/render/md_renderer.py` — **unwrap all `bbref:` links to inner text** (never
+    `[text](#id)`; MD has no place to put matching `id=` on arbitrary blocks).
 9. `breviabook/condense/common.py` — copy `anchor_id`; fix 1:1 string-paragraph shell copy.
 10. `breviabook/translate/translator.py` — prompt mention of `<br/>`-style structural
     `bbref:` stability (one line).
@@ -310,10 +311,12 @@ Report collected/passed counts from command output (not memory).
 - [ ] DMMT F1 symptom addressable: TOC/footnote `<a>` survive translate path with working href
       + link styling; confirmed on mini fixture (real-book re-QA by reviewer).
 - [ ] Condense path: missing targets unwrap cleanly (no dead links, no leaked `bbref:`).
+- [ ] Markdown: `bbref:` links unwrap to plain inner text — never `[text](#id)` / dangling frags.
 - [ ] `_SAFE_LINK_SCHEMES` byte-identical to today’s 3-tuple; no `#`/relative allowlist.
 - [ ] F2 cover dedupe does not mis-number cross-chapter hrefs.
 - [ ] Five gates green after implementation commit.
-- [ ] **No implementation in the same turn as this docs commit.**
+- [ ] Block `id="{anchor_id}"` values stay disjoint from OPF/manifest ids (`chap-*`, `img-*`,
+      `nav`, `cover-page`) — opaque `a{n}` prefix is sufficient; document if no shared uniquifier.
 
 ## Open questions for reviewer (non-blocking if defaults accepted)
 
