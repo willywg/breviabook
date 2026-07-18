@@ -6,6 +6,35 @@ All notable changes to BreviaBook are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-07-17
+
+Fidelity, resilience, and speed.
+
+### Added
+- `--concurrency N` — bounded parallel LLM calls within each phase (condense, synthesize,
+  translate, vision). Order is always preserved; the default keeps runs gentle, and raising it
+  speeds up providers that allow concurrent requests.
+- Retry with exponential backoff on the Ollama provider for transient failures (connection
+  errors / timeouts while the local server is busy or loading a model) — a single hiccup no
+  longer aborts the whole run.
+- **Block-level presentation is preserved**: text alignment (centered / right) on headings,
+  paragraphs, and quotes, plus list marker style and color, now round-trip from the source EPUB
+  through to the output EPUB and PDF. Markdown degrades cleanly.
+
+### Fixed
+- **Lists and block quotes survive condensation** as real `ListBlock` / `QuoteBlock` instead of
+  being flattened into paragraphs. A structured block that the model returns as plain prose is
+  kept verbatim rather than silently losing its structure.
+- `--resume` is far more reliable: condense, synthesis, translate-after-condense, and vision
+  checkpoints are now fingerprinted, so changing the model, target ratio, chunk size, or the book
+  itself recomputes stale records instead of silently reusing them.
+- The CI license audit now matches copyleft license strings correctly (e.g. "GNU AFFERO
+  GPL 3.0"), closing a gap where a GPL/AGPL dependency could have slipped past the exact-match gate.
+
+### Security
+- The `--api-endpoint` SSRF guard is now wired end-to-end: provider API keys are never forwarded
+  to disallowed or local/internal endpoints.
+
 ## [0.2.0] — 2026-07-16
 
 Full-book translation and preserved inline styling.
@@ -59,5 +88,6 @@ preserving code, tables, and meaningful figures, with optional same-pass transla
 - `--dry-run` token/page/compression/cost estimate; per-run usage report; compression and
   approximate page counts; `--resume` from a JSONL checkpoint.
 
+[0.3.0]: https://github.com/willywg/breviabook/releases/tag/v0.3.0
 [0.2.0]: https://github.com/willywg/breviabook/releases/tag/v0.2.0
 [0.1.0]: https://github.com/willywg/breviabook/releases/tag/v0.1.0
