@@ -11,6 +11,7 @@ In-book ``bbref:`` links are unwrapped to plain inner text (MD cannot emit match
 
 from __future__ import annotations
 
+import html
 from pathlib import Path
 from typing import assert_never
 
@@ -66,8 +67,14 @@ def _node_md(node: PageElement, image_links: dict[str, str]) -> str:
         if isinstance(href, str) and href.startswith("bbref:"):
             return inner
         return f"[{inner}]({href})" if isinstance(href, str) else inner
-    # <span style=color>, <s>, <sup>, <sub>: GFM renders inline HTML — keep it verbatim.
-    return str(node)
+    # <span style=color>, <s>, <sup>, <sub>: GFM renders inline HTML — keep the tag but emit the
+    # recursively-processed children, not str(node): a raw subtree would leak a nested bbref: <a>
+    # href into the Markdown (str(node) never reaches the <a> unwrap branch above).
+    attrs = "".join(
+        f' {k}="{html.escape(v if isinstance(v, str) else " ".join(v), quote=True)}"'
+        for k, v in node.attrs.items()
+    )
+    return f"<{name}{attrs}>{inner}</{name}>"
 
 
 class MarkdownRenderer:

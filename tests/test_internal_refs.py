@@ -180,6 +180,29 @@ def test_markdown_unwraps_bbref(tmp_path: Path) -> None:
     assert "**About this edition**" in md
 
 
+def test_markdown_unwraps_bbref_nested_in_verbatim_inline(tmp_path: Path) -> None:
+    # Regression: a bbref: <a> nested inside a kept-verbatim inline tag (<sup>, <span>, <s>)
+    # must still be unwrapped. str(node) on the outer tag would leak the raw href (DMMT
+    # footnote markers are <sup><a href="bbref:…">n</a></sup>).
+    doc = Document(
+        metadata=DocumentMetadata(title="T", source_format="epub"),
+        chapters=[
+            Chapter(
+                title="C",
+                blocks=[
+                    ParagraphBlock(
+                        text="See note 1",
+                        rich='See note <sup><a href="bbref:a15">1</a></sup>',
+                    )
+                ],
+            )
+        ],
+    )
+    md = MarkdownRenderer().render(doc, tmp_path).read_text(encoding="utf-8")
+    assert "bbref:" not in md
+    assert "<sup>1</sup>" in md  # marker kept, link unwrapped
+
+
 def test_external_http_still_round_trips() -> None:
     rich = sanitize_inline('<a href="https://example.com/x">link</a>')
     assert rich == '<a href="https://example.com/x">link</a>'
