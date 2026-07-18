@@ -45,6 +45,8 @@ def _node_md(node: PageElement, image_links: dict[str, str]) -> str:
     if not isinstance(node, Tag):
         return ""
     name = node.name.lower()
+    if name == "br":
+        return "  \n"  # GFM hard line break (rich <br/> has no Markdown tag equivalent)
     if name == "img":
         iid = node.get("data-image-id")
         link = image_links.get(iid) if isinstance(iid, str) else None

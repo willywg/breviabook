@@ -33,6 +33,7 @@ from breviabook.persistence.fingerprint import Fingerprint
 from breviabook.translate.glossary import Glossary
 from breviabook.utils.htmlsan import inline_tag_signature, sanitize_inline, strip_tags
 from breviabook.utils.jsonx import extract_json_object
+from breviabook.utils.langcodes import to_bcp47
 
 
 class TranslateError(Exception):
@@ -63,9 +64,9 @@ def build_translate_messages(
 Rules:
 - Translate only natural-language prose; keep meaning and technical accuracy.
 - Preserve identifiers, API names, file paths, URLs, and numbers exactly (do not translate them).
-- Some segments contain inline HTML tags (<em>, <strong>, <a>, <code>, <span>, <sup>, <sub>, <s>).
-  Keep every tag and its attributes exactly as written; translate only the visible text between
-  tags. Do not add, remove, reorder, or re-nest tags.
+- Some segments contain inline HTML tags (<em>, <strong>, <a>, <code>, <span>, <sup>, <sub>, <s>,
+  <br/>). Keep every tag and its attributes exactly as written; translate only the visible text
+  between tags. Do not add, remove, reorder, or re-nest tags. Preserve <br/> line breaks.
 - Do not add or remove segments; translate each one.
 {glossary_block}
 Return ONLY a JSON object (no prose, no fences) of the form:
@@ -131,7 +132,9 @@ class Translator:
         chapters = await asyncio.gather(
             *(translate_one(index, chapter) for index, chapter in enumerate(doc.chapters))
         )
-        return Document(metadata=doc.metadata, images=doc.images, chapters=list(chapters))
+        # EPUB dc:language / PDF html lang must reflect the target, not the source (F5).
+        meta = doc.metadata.model_copy(update={"language": to_bcp47(self.target_lang)})
+        return Document(metadata=meta, images=doc.images, chapters=list(chapters))
 
     async def translate_chapter(self, chapter: Chapter, *, chapter_index: int = 0) -> Chapter:
         units: dict[str, str] = {}

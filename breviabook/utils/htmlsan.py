@@ -10,10 +10,12 @@ never trust a model to hand back clean tags.
 
 Allowlist (everything else is unwrapped to its text):
 
-    <em> <strong> <a href> <code> <sup> <sub> <s> <span style="color:…">
+    <em> <strong> <a href> <code> <sup> <sub> <s> <span style="color:…"> <br/>
 
 produced from ``<i>/<em>``, ``<b>/<strong>``, ``<a>`` (http/https/mailto only), inline ``<code>``,
-``<sup>/<sub>``, ``<s>/<strike>/<del>``/``line-through``, and ``color`` set inline or via a class.
+``<sup>/<sub>``, ``<s>/<strike>/<del>``/``line-through``, ``color`` set inline or via a class,
+and void ``<br>`` (preserved as ``<br/>`` in ``rich``; ``strip_tags`` maps it to a space so the
+plain ``text`` projection for condensation is unchanged).
 """
 
 from __future__ import annotations
@@ -219,7 +221,7 @@ def _render_child(
         if name in _DROP_CONTENT:
             return ""
         if name == "br":
-            return " "
+            return "<br/>"
         if name == "img":
             return _render_img(node, img_resolver)
         inner = "".join(_render_child(c, class_styles, img_resolver) for c in node.children)
@@ -246,9 +248,15 @@ def contains_markup(rich: str) -> bool:
 
 
 def strip_tags(rich: str) -> str:
-    """Plain-text projection of a rich string (the ``text`` fallback / invariant)."""
-    text = BeautifulSoup(rich, "html.parser").get_text()
-    return _WS_RE.sub(" ", text).strip()
+    """Plain-text projection of a rich string (the ``text`` fallback / invariant).
+
+    ``<br>`` becomes a space so word boundaries survive without embedding newlines into the
+    condensation path (which budgets on flattened prose).
+    """
+    soup = BeautifulSoup(rich, "html.parser")
+    for br in soup.find_all("br"):
+        br.replace_with(" ")
+    return _WS_RE.sub(" ", soup.get_text()).strip()
 
 
 def inline_tag_signature(rich: str) -> Counter[str]:
