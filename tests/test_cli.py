@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from typer.testing import CliRunner
@@ -91,12 +92,20 @@ def test_condense_dry_run_still_shows_compression() -> None:
     assert "size change" not in result.stdout
 
 
+def _strip_ansi(text: str) -> str:
+    # rich colorizes option names and injects ANSI resets mid-token (even between
+    # the two dashes), so a literal "--concurrency" is absent from colored output.
+    # CI forces color; strip escapes before asserting on the rendered help.
+    return re.sub(r"\x1b\[[0-9;]*m", "", text)
+
+
 def test_commands_expose_concurrency_with_a_positive_default() -> None:
     for command in ("condense", "translate"):
-        result = runner.invoke(app, [command, "--help"])
+        result = runner.invoke(app, [command, "--help"], env={"COLUMNS": "200"})
         assert result.exit_code == 0
-        assert "--concurrency" in result.stdout
-        assert str(DEFAULT_CONCURRENCY) in result.stdout
+        plain = _strip_ansi(result.stdout)
+        assert "--concurrency" in plain
+        assert str(DEFAULT_CONCURRENCY) in plain
 
 
 def test_concurrency_rejects_zero() -> None:
