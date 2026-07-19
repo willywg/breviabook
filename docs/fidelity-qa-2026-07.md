@@ -89,15 +89,55 @@ EPUB. **Recommend deferring** unless faithful pagination is a goal. Listed for c
 
 ---
 
+---
+
+# Round 2 — Phase B QA (2026-07-19)
+
+Second real-book pass after F2/F3/F5 + Phase B (F1) shipped. F1 (TOC links) confirmed working;
+these are the remaining visual-fidelity gaps, root causes verified against source CSS.
+
+## F1b — Footnote links don't resolve (v1 limitation, not a regression)  ·  SEV: LOW · EFFORT: MED
+Phase B restored TOC links, but DMMT footnote markers stay plain superscripts. Their targets
+(`id="pref01fn1a"`) live on **inline** `<a>`/`<sup>`, and the emit pass only attaches `anchor_id`
+to block-level blocks, so the marker's `bbref:` unwraps. No leak, no regression (they had no link
+before either). Extending `anchor_id` to inline targets is a design follow-up. **Proposed: defer.**
+
+## F4 (reconfirmed) — Class-driven bold sub-headings render plain  ·  SEV: MED · EFFORT: MED
+Images #9, #10. Confirmed: `.legalnotice { font-weight: bold }` — "Notice of Rights / Notice of
+Liability / Trademarks" are `<p class="legalnotice">`. We resolve **color** classes but not
+`font-weight`/`font-style`, so the bold is dropped and they read as body text. The title-page
+subtitle (Image #9) loses weight the same way. Same fix as the original F4.
+
+## F7 — Centered images render left-aligned  ·  SEV: MED · EFFORT: MED
+Images #11, #12. Figures are centered in the source via a wrapper `class="center"`
+(`.center { text-align: center }`), but `ir/models.ImageBlock` has **no `align` field**, so only
+the caption paragraph (which is a text block) centers — the image itself hugs the left margin.
+**Fix.** Add `align: Align | None` to `ImageBlock`; parser reads the figure/wrapper `text-align`
+(reuse `block_align`); `render/html.py` centers the `<figure>`/`<img>`. Markdown drops it.
+
+## F8 — Hanging-indent "bullets" lose their internal tabulation  ·  SEV: MED · EFFORT: HIGH
+Image #13. Surprise: these are **not** `<ul>/<li>` lists. They are paragraphs with an inline-image
+bullet (`<span><img …></span>` = a red square) plus a bold lead-in, laid out with a CSS
+hanging-indent class (`.indenthangingB { text-indent:-10pt; margin:… 45pt }`). The bullet image
+and bold survive, but the **hanging indent is lost** because we carry no block-level
+`text-indent`/`margin`, so continuation lines wrap to the left margin instead of hanging under the
+text. **Fix options.** (a) Detect a hanging-indent class and model it as a real `ListBlock`
+(semantic, best output but heuristic); or (b) carry a block `indent`/`hanging` presentation flag
+and emit matching CSS. (a) is cleaner long-term but riskier to detect; (b) is faithful but adds a
+presentation field. Needs a design decision — **not a quick win.**
+
 ## Proposed execution order (for Grok)
 
-| # | Task | Sev | Effort | Vehicle |
+| # | Task | Sev | Effort | Status / Vehicle |
 |---|------|-----|--------|---------|
-| F3 | `<br>` line breaks | MED | LOW | new PRP `feat--br-line-breaks.md` (quick win) |
-| F5 | translated `dc:language` | LOW | LOW | fold into F3 PRP or its own tiny PRP |
-| F2 | cover image + metadata | HIGH | MED | new PRP `feat--cover-preservation.md` |
-| F4 | block class weight/style | MED | MED | new PRP `feat--block-class-styling.md` |
-| F1 | internal links + color | HIGH | HIGH | **unpark** `feat--internal-refs.md` (Phase B) |
+| F3 | `<br>` line breaks | MED | LOW | ✅ shipped `44d2232` |
+| F5 | translated `dc:language` | LOW | LOW | ✅ shipped `44d2232` |
+| F2 | cover image + metadata | HIGH | MED | ✅ shipped `0c4d6f5` |
+| F1 | internal links + color | HIGH | HIGH | ✅ shipped `54df57b`/`61ab01c` (footnotes = F1b) |
+| F4 | block class weight/style | MED | MED | **next** — PRP `feat--block-class-styling.md` |
+| F7 | image alignment (centering) | MED | MED | new PRP `feat--image-align.md` (pairs well with F4) |
+| F8 | hanging-indent bullets | MED | HIGH | needs design decision (ListBlock detect vs indent flag) |
+| F1b | footnote inline-id targets | LOW | MED | defer (v1 limitation) |
 
 Quick wins first (F3+F5, F2) to bank visible fidelity fast; F4 next; F1/Phase B last as the
 heaviest. Each is independently shippable and testable with a synthetic fixture **plus** a
