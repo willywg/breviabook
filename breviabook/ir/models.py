@@ -63,6 +63,8 @@ class ImageBlock(BaseModel):
     type: Literal["image"] = "image"
     image_id: str
     caption: str | None = None
+    # Block presentation (F7): figure/wrapper text-align; None = UA default. Markdown ignores.
+    align: Align | None = None
 
 
 class TableBlock(BaseModel):

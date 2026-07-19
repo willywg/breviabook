@@ -57,8 +57,9 @@ warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 _CONTAINER = "META-INF/container.xml"
 _HEADINGS = {"h1": 1, "h2": 2, "h3": 3, "h4": 4, "h5": 5, "h6": 6}
 # Block tags that may inherit ``text-align`` / ``anchor_id`` from a single-child wrapper (1 level).
-_ALIGNABLE = frozenset({"p", "blockquote", *_HEADINGS})
-_ANCHORABLE = frozenset({*_ALIGNABLE, "ul", "ol"})
+# ``figure``/``img`` inherit align only (F7); they are not anchor-bearing blocks.
+_ALIGNABLE = frozenset({"p", "blockquote", "figure", "img", *_HEADINGS})
+_ANCHORABLE = frozenset({"p", "blockquote", *_HEADINGS, "ul", "ol"})
 _SAFE_EXTERNAL = ("http://", "https://", "mailto:")
 
 
@@ -366,9 +367,29 @@ class EpubParser:
             elif tag == "pre":
                 out.append(self._code_block(child))
             elif tag == "figure":
-                self._emit_images(child, href, opf_path, manifest, zf, images, out)
+                self._emit_images(
+                    child,
+                    href,
+                    opf_path,
+                    manifest,
+                    zf,
+                    images,
+                    out,
+                    class_styles,
+                    inherit_align,
+                )
             elif tag == "img":
-                self._add_image(child, href, opf_path, manifest, zf, images, out)
+                self._add_image(
+                    child,
+                    href,
+                    opf_path,
+                    manifest,
+                    zf,
+                    images,
+                    out,
+                    class_styles,
+                    inherit_align=inherit_align,
+                )
             elif tag == "blockquote":
                 text, rich = _rich_text(child, class_styles, img_resolver, href_resolver)
                 if text:
@@ -407,7 +428,17 @@ class EpubParser:
                     aid = self._block_anchor_id(child, href, anchors, inherit_anchor, out)
                     out.append(ParagraphBlock(text=text, rich=rich, align=align, anchor_id=aid))
                 elif child.find("img"):
-                    self._emit_images(child, href, opf_path, manifest, zf, images, out)
+                    self._emit_images(
+                        child,
+                        href,
+                        opf_path,
+                        manifest,
+                        zf,
+                        images,
+                        out,
+                        class_styles,
+                        inherit_align,
+                    )
             else:
                 kids = [c for c in child.children if isinstance(c, Tag)]
                 wrapper_align = block_align(child, class_styles)
@@ -496,11 +527,25 @@ class EpubParser:
         zf: zipfile.ZipFile,
         images: dict[str, ImageAsset],
         out: list[Block],
+        class_styles: ClassStyles,
+        inherit_align: Align | None = None,
     ) -> None:
         caption_el = container.find("figcaption")
         caption = caption_el.get_text(" ", strip=True) if isinstance(caption_el, Tag) else None
+        container_align = block_align(container, class_styles) or inherit_align
         for img in container.find_all("img"):
-            self._add_image(img, href, opf_path, manifest, zf, images, out, caption)
+            self._add_image(
+                img,
+                href,
+                opf_path,
+                manifest,
+                zf,
+                images,
+                out,
+                class_styles,
+                caption=caption,
+                inherit_align=container_align,
+            )
 
     def _add_image(
         self,
@@ -511,7 +556,9 @@ class EpubParser:
         zf: zipfile.ZipFile,
         images: dict[str, ImageAsset],
         out: list[Block],
+        class_styles: ClassStyles,
         caption: str | None = None,
+        inherit_align: Align | None = None,
     ) -> None:
         src = img.get("src")
         if not isinstance(src, str) or not src:
@@ -522,7 +569,14 @@ class EpubParser:
         image_id = self._register_asset(img_path, alt_str, manifest, opf_path, zf, images)
         if image_id is None:
             return
-        out.append(ImageBlock(image_id=image_id, caption=_clean_caption(caption or alt_str)))
+        align = block_align(img, class_styles) or inherit_align
+        out.append(
+            ImageBlock(
+                image_id=image_id,
+                caption=_clean_caption(caption or alt_str),
+                align=align,
+            )
+        )
 
     def _register_asset(
         self,

@@ -145,7 +145,7 @@ def block_to_html(
             return ""
         alt = esc(block.caption or "")
         caption = f"<figcaption>{esc(block.caption)}</figcaption>" if block.caption else ""
-        return f'<figure><img src="{src}" alt="{alt}"/>{caption}</figure>'
+        return f'<figure{_align_attr(block.align)}><img src="{src}" alt="{alt}"/>{caption}</figure>'
     assert_never(block)
 
 

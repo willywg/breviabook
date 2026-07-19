@@ -179,6 +179,21 @@ def _safe_href_value(href: str) -> str | None:
     return None
 
 
+def _apply_text_styles(inner: str, eff: dict[str, str]) -> str:
+    """Wrap ``inner`` with strike/italic/bold/color (innermost → outermost)."""
+    if not inner:
+        return ""
+    if eff.get("strike"):
+        inner = f"<s>{inner}</s>"
+    if eff.get("italic"):
+        inner = f"<em>{inner}</em>"
+    if eff.get("bold"):
+        inner = f"<strong>{inner}</strong>"
+    if "color" in eff:
+        inner = f'<span style="color:{esc(eff["color"])}">{inner}</span>'
+    return inner
+
+
 def _wrap(
     inner: str,
     node: Tag,
@@ -196,14 +211,7 @@ def _wrap(
         inner = f"<{name}>{inner}</{name}>"
     if name == "code":
         inner = f"<code>{inner}</code>"
-    if eff.get("strike"):
-        inner = f"<s>{inner}</s>"
-    if eff.get("italic"):
-        inner = f"<em>{inner}</em>"
-    if eff.get("bold"):
-        inner = f"<strong>{inner}</strong>"
-    if "color" in eff:
-        inner = f'<span style="color:{esc(eff["color"])}">{inner}</span>'
+    inner = _apply_text_styles(inner, eff)
     if name == "a":
         raw = node.get("href")
         if isinstance(raw, str):
@@ -259,12 +267,21 @@ def sanitize_inline(
     img_resolver: ImgResolver | None = None,
     href_resolver: HrefResolver | None = None,
 ) -> str:
-    """Return normalized, sanitized inline HTML for ``source`` (a BS4 element or a raw string)."""
+    """Return normalized, sanitized inline HTML for ``source`` (a BS4 element or a raw string).
+
+    When ``source`` is a block ``Tag`` (as the EPUB parser passes ``<p>``/``<h*>``), class and
+    inline weight/style on that root — e.g. ``.legalnotice { font-weight: bold }`` — are applied
+    to the whole string. String inputs only pick up styles from descendant tags.
+    """
     cs = class_styles or {}
+    root = source if isinstance(source, Tag) else None
     if isinstance(source, str):
         source = BeautifulSoup(source, "html.parser")
     inner = "".join(_render_child(c, cs, img_resolver, href_resolver) for c in source.children)
-    return _WS_RE.sub(" ", inner).strip()
+    inner = _WS_RE.sub(" ", inner).strip()
+    if root is not None:
+        inner = _apply_text_styles(inner, _effective_styles(root, cs))
+    return inner
 
 
 def rewrite_bbrefs(rich: str, resolve: Callable[[str], str | None] | None) -> str:
