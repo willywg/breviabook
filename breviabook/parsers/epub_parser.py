@@ -68,6 +68,22 @@ def _local(tag: str) -> str:
     return tag.rsplit("}", 1)[-1].lower()
 
 
+def _ancestor_align(node: Tag, class_styles: ClassStyles) -> Align | None:
+    """Nearest ancestor's ``text-align`` (CSS inherits it to every descendant).
+
+    Used only for images: a figure centered by its wrapper — e.g. ``<div class="image">`` around
+    an ``<img>`` AND its ``<p class="caption">`` — must still center the image, even though the
+    conservative text rule declines to inherit align onto a multi-child wrapper's paragraphs.
+    """
+    parent = node.parent
+    while isinstance(parent, Tag) and parent.name.lower() != "body":
+        align = block_align(parent, class_styles)
+        if align is not None:
+            return align
+        parent = parent.parent
+    return None
+
+
 @dataclass
 class _AnchorIndex:
     """Parse-only maps from source locations to opaque ``anchor_id`` values (``a1``, ``a2``, …)."""
@@ -569,7 +585,9 @@ class EpubParser:
         image_id = self._register_asset(img_path, alt_str, manifest, opf_path, zf, images)
         if image_id is None:
             return
-        align = block_align(img, class_styles) or inherit_align
+        align = (
+            block_align(img, class_styles) or inherit_align or _ancestor_align(img, class_styles)
+        )
         out.append(
             ImageBlock(
                 image_id=image_id,

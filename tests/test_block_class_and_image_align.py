@@ -164,6 +164,56 @@ def test_centered_figure_sets_image_align(tmp_path: Path) -> None:
     assert images[0].caption == "Figure 1"
 
 
+def _mini_epub_image_wrapper_with_caption(path: Path) -> None:
+    # DMMT shape: a centered wrapper holds BOTH the image and its caption (multi-child), so the
+    # conservative single-child align rule does not fire — the image must inherit via ancestry.
+    container = (
+        '<?xml version="1.0"?><container version="1.0" '
+        'xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles>'
+        '<rootfile full-path="OEBPS/content.opf" '
+        'media-type="application/oebps-package+xml"/></rootfiles></container>'
+    )
+    opf = (
+        '<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0" '
+        'unique-identifier="b"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
+        '<dc:identifier id="b">x</dc:identifier><dc:title>T</dc:title>'
+        "<dc:language>en</dc:language></metadata><manifest>"
+        '<item id="css" href="s.css" media-type="text/css"/>'
+        '<item id="img1" href="fig.png" media-type="image/png"/>'
+        '<item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/>'
+        '</manifest><spine><itemref idref="c1"/></spine></package>'
+    )
+    css = ".image { text-align: center } .caption { }"
+    ch = (
+        '<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml"><head>'
+        '<title>C</title><link rel="stylesheet" href="s.css"/></head><body>'
+        '<div class="image"><img src="fig.png" alt="Image"/>'
+        '<p class="caption">2000</p></div>'
+        '<div class="center"><p>One</p><p>Two</p></div>'
+        "</body></html>"
+    )
+    with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr("META-INF/container.xml", container)
+        zf.writestr("OEBPS/content.opf", opf)
+        zf.writestr("OEBPS/s.css", css)
+        zf.writestr("OEBPS/c1.xhtml", ch)
+        zf.writestr("OEBPS/fig.png", _PNG)
+
+
+def test_image_in_multichild_wrapper_inherits_align(tmp_path: Path) -> None:
+    path = tmp_path / "wrap.epub"
+    _mini_epub_image_wrapper_with_caption(path)
+    doc = EpubParser().parse(path)
+    blocks = [b for _, b in doc.iter_blocks()]
+    images = [b for b in blocks if isinstance(b, ImageBlock)]
+    assert len(images) == 1
+    assert images[0].align == "center"  # image centers with its wrapper
+    # Conservative text rule unchanged: a text-only multi-child wrapper still doesn't inherit.
+    text_multi = [b for b in blocks if isinstance(b, ParagraphBlock) and b.text in {"One", "Two"}]
+    assert len(text_multi) == 2
+    assert all(b.align is None for b in text_multi)
+
+
 def test_html_centers_figure_when_align_set() -> None:
     html = block_to_html(ImageBlock(image_id="i", caption="c", align="center"), _noop_src)
     assert 'style="text-align:center"' in html
