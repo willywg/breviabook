@@ -6,6 +6,33 @@ All notable changes to BreviaBook are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-07-19
+
+Round-trip fidelity: covers, in-book links, and block-level styling now survive the
+rebuilt EPUB/PDF. Validated end-to-end on a real book (EN→ES translation pass).
+
+### Added
+- **In-book cross-references survive the rebuild.** TOC entries and chapter links are remapped to
+  their new output locations (opaque `bbref:` anchors resolved at render), so a translated or
+  condensed EPUB keeps working internal navigation and the link styling — or cleanly unwraps a
+  link whose target was dropped. External `http(s)`/`mailto` links are unchanged; the sanitizer
+  allowlist is not widened (internal links use a dedicated opaque scheme).
+- **Book cover is preserved.** The source cover image round-trips into the output EPUB as a
+  proper `cover-image` (manifest property + legacy `<meta name="cover">` + a `cover.xhtml` at the
+  spine head), so readers show the cover thumbnail again.
+- **Block-level styling round-trips.** Class-driven bold/italic on paragraphs and headings (e.g.
+  `font-weight:bold` sub-headings like "Notice of Rights") now render, and images centered by
+  their wrapper are centered in the output — not just their captions.
+- **Intra-paragraph line breaks (`<br>`) are preserved**, so credit/address blocks keep their
+  line structure instead of collapsing into one run of prose. Markdown emits GFM hard breaks.
+- **Translated output sets the target language.** A Spanish translation now reports
+  `dc:language = es` (EPUB) / `lang="es"` (PDF) instead of the source language.
+
+### Fixed
+- Markdown no longer leaks internal `bbref:` link placeholders (nested inside `<sup>`/`<span>`).
+- The `--concurrency` CLI help test no longer fails under CI's colored, narrow terminal (ANSI
+  codes split the option name); CI is green again.
+
 ## [0.3.0] — 2026-07-17
 
 Fidelity, resilience, and speed.
@@ -88,6 +115,7 @@ preserving code, tables, and meaningful figures, with optional same-pass transla
 - `--dry-run` token/page/compression/cost estimate; per-run usage report; compression and
   approximate page counts; `--resume` from a JSONL checkpoint.
 
+[0.4.0]: https://github.com/willywg/breviabook/releases/tag/v0.4.0
 [0.3.0]: https://github.com/willywg/breviabook/releases/tag/v0.3.0
 [0.2.0]: https://github.com/willywg/breviabook/releases/tag/v0.2.0
 [0.1.0]: https://github.com/willywg/breviabook/releases/tag/v0.1.0
