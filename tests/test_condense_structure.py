@@ -7,6 +7,7 @@ import pytest
 from breviabook.condense.common import (
     CondenseError,
     parse_condensed_run,
+    parse_run_or_keep,
     run_has_structured_blocks,
     serialize_run,
 )
@@ -92,3 +93,59 @@ def test_parse_condensed_run_count_mismatch_raises() -> None:
     source = [ParagraphBlock(text="a"), QuoteBlock(text="q")]
     with pytest.raises(CondenseError, match="block count mismatch"):
         parse_condensed_run([{"type": "paragraph", "text": "only one"}], source)
+
+
+def test_paragraph_only_run_may_merge_blocks() -> None:
+    """Condensing prose merges paragraphs. A run of only paragraphs must allow it."""
+    source = [ParagraphBlock(text="First long."), ParagraphBlock(text="Second long.")]
+    out = parse_condensed_run([{"type": "paragraph", "text": "Both, briefly."}], source)
+    assert len(out) == 1
+    assert isinstance(out[0], ParagraphBlock) and out[0].text == "Both, briefly."
+
+
+def test_paragraph_only_run_may_split_blocks() -> None:
+    source = [ParagraphBlock(text="One dense paragraph.")]
+    out = parse_condensed_run(["First half.", "Second half."], source)
+    assert [b.text for b in out] == ["First half.", "Second half."]
+
+
+def test_structured_run_still_demands_alignment() -> None:
+    """A list or quote has a type to preserve, so its run keeps the strict rule."""
+    source = [ParagraphBlock(text="p"), ListBlock(items=["a", "b"])]
+    with pytest.raises(CondenseError, match="block count mismatch"):
+        parse_condensed_run([{"type": "paragraph", "text": "merged"}], source)
+
+
+def test_missing_entry_raises_rather_than_deleting_prose() -> None:
+    """No key for a run means the model never spoke about it — not 'delete it'."""
+    source = [ParagraphBlock(text="Text the user wrote.")]
+    with pytest.raises(CondenseError, match="no entry returned"):
+        parse_condensed_run(None, source)
+
+
+def test_explicit_empty_string_still_drops_a_paragraph_run() -> None:
+    """An empty value is the model saying 'nothing survives', which is legitimate."""
+    assert parse_condensed_run("", [ParagraphBlock(text="filler")]) == []
+
+
+def test_empty_array_drops_a_paragraph_run_like_an_empty_string() -> None:
+    """Deliberate: `[]` and `""` are the same statement in two notations.
+
+    Distinguishing them would mean one spelling of "nothing survives" is honoured
+    and the other is an error, which no prompt asks the model to know.
+    """
+    assert parse_condensed_run([], [ParagraphBlock(text="filler")]) == []
+
+
+def test_parse_run_or_keep_falls_back_to_source() -> None:
+    source = [ParagraphBlock(text="p"), QuoteBlock(text="q")]
+    blocks, degraded = parse_run_or_keep([{"type": "paragraph", "text": "merged"}], source)
+    assert degraded is True
+    assert blocks == source
+
+
+def test_parse_run_or_keep_reports_success() -> None:
+    source = [ParagraphBlock(text="long")]
+    blocks, degraded = parse_run_or_keep("short", source)
+    assert degraded is False
+    assert [b.text for b in blocks] == ["short"]

@@ -456,6 +456,14 @@ async def _run_condense(
         for ch in chapters
         if ch.synthesis_failed
     )
+    # One line, not one per run: a long book can shed dozens of runs and a wall of
+    # identical warnings buries the ones that name a whole chapter.
+    degraded = sum(cc.degraded_runs for cc in condensed) + sum(ch.degraded_runs for ch in chapters)
+    if degraded:
+        warnings.append(
+            f"{degraded} passage(s) kept their original wording — the model's reply for "
+            "them did not match the expected structure"
+        )
     working_doc = synthesized_to_document(doc, chapters)
 
     batches_reused = 0

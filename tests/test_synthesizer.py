@@ -238,6 +238,65 @@ async def test_resume_recomputes_on_ratio_change(tmp_path: Path) -> None:
     assert s.reused_chapters == 0
 
 
+def _two_run_chapter() -> list[CondensedChunk]:
+    """A chapter whose prose is split into two runs by a code block between them."""
+    return [
+        _cc([ParagraphBlock(text="intro a"), ParagraphBlock(text="intro b")], input_tokens=200),
+        _cc(
+            [
+                CodeBlock(text="print(1)", language="python"),
+                ParagraphBlock(text="after the code"),
+                ListBlock(items=["first", "second"]),
+            ],
+            input_tokens=200,
+        ),
+    ]
+
+
+async def test_one_unreadable_run_does_not_cost_the_whole_chapter() -> None:
+    """The bug this guards: a single mis-shaped run used to fail every run beside it.
+
+    Run 2 carries a list, so it keeps the strict alignment rule and the model's
+    single merged entry is rejected. Run 1 must still come back smoothed, and the
+    list must survive with its own items rather than being dropped.
+    """
+    reply = json.dumps(
+        {
+            "texts": {
+                "1": "smoothed intro",
+                "2": [{"type": "paragraph", "text": "merged the list away"}],
+            }
+        }
+    )
+    provider = QueueProvider([reply])
+    out = await Synthesizer(provider, "m", target_ratio=0.50).synthesize(_two_run_chapter())
+
+    chapter = out[0]
+    assert chapter.synthesis_failed is False
+    assert chapter.degraded_runs == 1
+    assert provider.calls == 1  # a readable pass is not re-bought
+
+    texts = [b.text for b in chapter.blocks if isinstance(b, ParagraphBlock)]
+    assert "smoothed intro" in texts  # run 1 was smoothed
+    assert "after the code" in texts  # run 2 kept its source wording
+    lists = [b for b in chapter.blocks if isinstance(b, ListBlock)]
+    assert [b.items for b in lists] == [["first", "second"]]
+
+
+async def test_every_run_unreadable_still_retries() -> None:
+    """A response nothing can be read from is a real failure, and does buy a retry."""
+    # Run 1 gets entries that are not paragraphs; run 2 gets a flat string where its
+    # list demands an array. Neither is readable, so the reply is worth nothing.
+    useless = json.dumps({"texts": {"1": [{"bad": 1}], "2": "flat prose"}})
+    provider = QueueProvider([useless])
+    out = await Synthesizer(provider, "m", target_ratio=0.50, max_retries=2).synthesize(
+        _two_run_chapter()
+    )
+
+    assert provider.calls == 2
+    assert out[0].synthesis_failed is True
+
+
 async def test_failed_synthesis_is_not_cached_and_retried(tmp_path: Path) -> None:
     cp_path = tmp_path / "run.jsonl"
     # Smooth pass keeps returning malformed JSON → synthesis_failed, must not be recorded.

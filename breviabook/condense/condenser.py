@@ -29,7 +29,7 @@ from breviabook.condense.common import (
     CondenseError,
     Segment,
     extract_json,
-    parse_condensed_run,
+    parse_run_or_keep,
     segment_blocks,
     serialize_run,
     structural_marker,
@@ -63,6 +63,9 @@ class CondensedChunk(BaseModel):
     output_tokens: int = 0
     output_longer_than_input: bool = False
     condense_failed: bool = False  # parse kept failing → kept the chunk uncondensed
+    # Prose runs that kept their source wording because the model's entry for them
+    # could not be read. The rest of the chunk is condensed normally.
+    degraded_runs: int = 0
 
 
 class Condenser:
@@ -147,14 +150,20 @@ class Condenser:
 
         body, image_ids = _serialize(segments)
         messages = build_condense_messages(body, self.target_ratio, image_ids)
+        total_runs = sum(1 for seg in segments if seg.kind == "text")
         for _attempt in range(self.max_retries):
             raw = await self.provider.generate(messages, self.model)
             try:
                 texts, essential = _parse_response(raw)
-                return self._reassemble(chunk, segments, texts, essential)
             except CondenseError:
-                continue  # retry with a fresh generation
-        # All retries failed to parse: keep the chunk uncondensed and flag it.
+                continue  # not JSON at all — only a fresh generation can help
+            cc = self._reassemble(chunk, segments, texts, essential)
+            # One run the model shaped wrongly is not a reason to re-buy the whole
+            # chunk; every run rejected means the response was useless.
+            if total_runs and cc.degraded_runs == total_runs:
+                continue
+            return cc
+        # Nothing usable after retries: keep the chunk uncondensed and flag it.
         cc = self._passthrough(chunk, segments)
         cc.condense_failed = True
         return cc
@@ -169,9 +178,12 @@ class Condenser:
         new_blocks: list[Block] = []
         kept: list[str] = []
         dropped: list[str] = []
+        degraded = 0
         for seg in segments:
             if seg.kind == "text":
-                new_blocks.extend(parse_condensed_run(texts.get(str(seg.run_id)), seg.blocks))
+                blocks, fell_back = parse_run_or_keep(texts.get(str(seg.run_id)), seg.blocks)
+                new_blocks.extend(blocks)
+                degraded += int(fell_back)
             elif seg.kind == "keep" and seg.block is not None:
                 new_blocks.append(seg.block)
             elif seg.kind == "image" and seg.image_id is not None:
@@ -180,7 +192,7 @@ class Condenser:
                     kept.append(seg.image_id)
                 else:
                     dropped.append(seg.image_id)
-        return self._build(chunk, new_blocks, kept, dropped)
+        return self._build(chunk, new_blocks, kept, dropped, degraded_runs=degraded)
 
     def _passthrough(self, chunk: Chunk, segments: list[Segment]) -> CondensedChunk:
         """No prose to condense: keep blocks and all images unchanged."""
@@ -188,7 +200,13 @@ class Condenser:
         return self._build(chunk, list(chunk.blocks), kept, [])
 
     def _build(
-        self, chunk: Chunk, blocks: list[Block], kept: list[str], dropped: list[str]
+        self,
+        chunk: Chunk,
+        blocks: list[Block],
+        kept: list[str],
+        dropped: list[str],
+        *,
+        degraded_runs: int = 0,
     ) -> CondensedChunk:
         output_tokens = sum(block_tokens(b) for b in blocks)
         return CondensedChunk(
@@ -201,6 +219,7 @@ class Condenser:
             input_tokens=chunk.token_count,
             output_tokens=output_tokens,
             output_longer_than_input=output_tokens > chunk.token_count,
+            degraded_runs=degraded_runs,
         )
 
 

@@ -19,7 +19,7 @@ from breviabook.condense.common import (
     CondenseError,
     Segment,
     extract_json,
-    parse_condensed_run,
+    parse_run_or_keep,
     segment_blocks,
     serialize_run,
     structural_marker,
@@ -46,6 +46,10 @@ class SynthesizedChapter(BaseModel):
     output_tokens: int = 0
     trim_passes: int = 0
     synthesis_failed: bool = False  # smooth pass kept failing → kept condensed text as-is
+    # Runs that fell back to their source wording because the model's entry for
+    # them could not be read. Counted across every pass on this chapter, so it is
+    # a measure of friction with the model, not of how much text is unsmoothed.
+    degraded_runs: int = 0
 
 
 class Synthesizer:
@@ -159,7 +163,7 @@ class Synthesizer:
 
         smoothed = await self._synth_pass(segments, target_tokens, smooth=True)
         if smoothed is None:
-            # Smoothing kept returning malformed JSON: keep the concatenated condensed text.
+            # Nothing usable came back at all: keep the concatenated condensed text.
             return self._result(
                 first,
                 blocks,
@@ -169,7 +173,7 @@ class Synthesizer:
                 0,
                 synthesis_failed=True,
             )
-        blocks = smoothed
+        blocks, degraded = smoothed
         output_tokens = sum(block_tokens(b) for b in blocks)
 
         passes = 0
@@ -180,26 +184,46 @@ class Synthesizer:
                 break
             trimmed = await self._synth_pass(segments, target_tokens, smooth=False)
             if trimmed is None:
-                break  # parse failed on this trim pass; keep what we have
+                break  # nothing usable on this trim pass; keep what we have
             passes += 1
-            blocks = trimmed
+            blocks, trim_degraded = trimmed
+            degraded += trim_degraded
             output_tokens = sum(block_tokens(b) for b in blocks)
 
-        return self._result(first, blocks, kept_image_ids, input_tokens, target_tokens, passes)
+        return self._result(
+            first,
+            blocks,
+            kept_image_ids,
+            input_tokens,
+            target_tokens,
+            passes,
+            degraded_runs=degraded,
+        )
 
     async def _synth_pass(
         self, segments: list[Segment], target_tokens: int, *, smooth: bool
-    ) -> list[Block] | None:
-        """Run one synthesis pass; return ``None`` if the response can't be parsed after retries."""
+    ) -> tuple[list[Block], int] | None:
+        """Run one synthesis pass. Returns ``(blocks, degraded_runs)``, or ``None``.
+
+        A retry only buys something when the response was unusable as a whole —
+        no JSON, or not one run readable. Retrying because a single run came back
+        with the wrong shape sends the identical prompt at a model that already
+        made a deterministic choice, and pays for the whole chapter again to get
+        the same answer.
+        """
         body = _serialize(segments)
         messages = build_synthesize_messages(body, target_tokens, smooth=smooth)
+        total_runs = sum(1 for seg in segments if seg.kind == "text")
         for _attempt in range(self.max_retries):
             raw = await self.provider.generate(messages, self.model)
             try:
                 texts = _parse_texts(raw)
-                return _reassemble(segments, texts)
             except CondenseError:
-                continue
+                continue  # not JSON at all — only a fresh generation can help
+            blocks, degraded = _reassemble(segments, texts)
+            if total_runs and degraded == total_runs:
+                continue  # every run rejected: the response was useless, not imperfect
+            return blocks, degraded
         return None
 
     def _result(
@@ -212,6 +236,7 @@ class Synthesizer:
         passes: int,
         *,
         synthesis_failed: bool = False,
+        degraded_runs: int = 0,
     ) -> SynthesizedChapter:
         return SynthesizedChapter(
             chapter_index=first.chapter_index,
@@ -223,6 +248,7 @@ class Synthesizer:
             output_tokens=sum(block_tokens(b) for b in blocks),
             trim_passes=passes,
             synthesis_failed=synthesis_failed,
+            degraded_runs=degraded_runs,
         )
 
 
@@ -278,14 +304,18 @@ def _parse_texts(raw: str) -> dict[str, object]:
     return texts
 
 
-def _reassemble(segments: list[Segment], texts: dict[str, object]) -> list[Block]:
+def _reassemble(segments: list[Segment], texts: dict[str, object]) -> tuple[list[Block], int]:
+    """Rebuild the block list, keeping the original wording of any run we can't read."""
     out: list[Block] = []
+    degraded = 0
     for seg in segments:
         if seg.kind == "text":
-            out.extend(parse_condensed_run(texts.get(str(seg.run_id)), seg.blocks))
+            blocks, fell_back = parse_run_or_keep(texts.get(str(seg.run_id)), seg.blocks)
+            out.extend(blocks)
+            degraded += int(fell_back)
         elif seg.block is not None:  # keep or image — preserved in place
             out.append(seg.block)
-    return out
+    return out, degraded
 
 
 def synthesized_to_document(original: Document, chapters: list[SynthesizedChapter]) -> Document:

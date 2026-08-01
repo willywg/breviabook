@@ -6,6 +6,32 @@ All notable changes to BreviaBook are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **Condensation no longer rejects itself for having condensed.** The prompt asks the model to
+  smooth and shorten prose, and the parser then demanded one output block per source block —
+  but merging paragraphs is what shortening *is*. A run of nothing but paragraphs now accepts
+  any number of blocks back, exactly as the plain-string form of the same response already did.
+  A list or a quote still needs its alignment, because those carry a type worth preserving.
+- **A run the model shapes wrongly no longer costs the whole chapter.** Validation was
+  all-or-nothing: one bad run out of forty-eight discarded every good one beside it, and the
+  retry sent the identical prompt, so a deterministic disagreement failed all three attempts.
+  Each run now falls back to its own source wording and the rest of the pass is kept. Measured
+  on a real book, chapters that failed 3/3 attempts now succeed on the first, with roughly a
+  fifth of runs keeping their original text instead of the whole chapter doing so.
+- **Retries are spent where they can help.** A pass is retried when the reply is not JSON, or
+  when no run at all could be read — not when one run came back mis-shaped. Failed chapters
+  previously paid for three full-chapter calls that could never have succeeded.
+- **A run the model omits entirely keeps its text.** A missing key was indistinguishable from
+  "condensed to nothing" and silently deleted the passage. An explicit empty value still means
+  nothing survives.
+- **Chapter-level failures skipped length control**, which is the only stage that enforces
+  `target_ratio` — so a JSON shape disagreement quietly became a book at ~57% of its input when
+  30% was asked for. With the above, the trim loop runs.
+
+### Added
+- `degraded_runs` on `CondensedChunk` and `SynthesizedChapter`, surfaced as a single aggregate
+  pipeline warning rather than one line per run.
+
 ## [0.4.0] — 2026-07-19
 
 Round-trip fidelity: covers, in-book links, and block-level styling now survive the

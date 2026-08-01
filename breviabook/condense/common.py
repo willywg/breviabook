@@ -125,20 +125,50 @@ def parse_condensed_run(raw: object | None, source_blocks: list[Block]) -> list[
 
     if isinstance(raw, list):
         if len(raw) != len(source_blocks):
-            raise CondenseError(
-                f"block count mismatch: expected {len(source_blocks)}, got {len(raw)}"
-            )
+            # Only a run carrying a list or a quote needs its blocks to line up:
+            # those have a type to preserve, and losing the alignment means losing
+            # which entry was the list. A run of nothing but paragraphs has no such
+            # identity — merging two into one is what condensing *is*, and the
+            # string form of this very response is already allowed to come back
+            # with any number of paragraphs. Demanding an exact count here was
+            # rejecting the model for doing what the prompt asked.
+            if structured:
+                raise CondenseError(
+                    f"block count mismatch: expected {len(source_blocks)}, got {len(raw)}"
+                )
+            return [ParagraphBlock(text=_paragraph_text(entry)) for entry in raw]
         return [
             _parse_block_entry(entry, source)
             for entry, source in zip(raw, source_blocks, strict=True)
         ]
 
-    if raw is None or raw == "":
+    # No key for this run at all. Distinct from an explicit empty value: the model
+    # never spoke about this text, so treating it as "condensed to nothing" would
+    # silently delete prose the user wrote. Let the caller keep the original.
+    if raw is None:
+        raise CondenseError("no entry returned for this run")
+
+    if raw == "":
         if structured:
             raise CondenseError("structured run requires JSON array response, got empty value")
         return []
 
     raise CondenseError(f"unexpected texts value type: {type(raw).__name__}")
+
+
+def parse_run_or_keep(raw: object | None, source_blocks: list[Block]) -> tuple[list[Block], bool]:
+    """Parse one run, falling back to its source blocks. Returns ``(blocks, degraded)``.
+
+    Validation used to be all-or-nothing per chunk/chapter: one run the model got
+    structurally wrong threw away every correct run beside it, and the retry sent
+    the identical prompt, so a deterministic disagreement failed all three times.
+    A run that cannot be read is now the only thing that suffers — it keeps its
+    original wording while the rest of the pass is condensed normally.
+    """
+    try:
+        return parse_condensed_run(raw, source_blocks), False
+    except CondenseError:
+        return list(source_blocks), True
 
 
 def _parse_block_entry(entry: object, source: Block) -> Block:
