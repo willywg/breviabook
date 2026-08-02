@@ -62,7 +62,7 @@ class Synthesizer:
         target_ratio: float = 0.30,
         *,
         tolerance: float = 0.15,
-        max_trim_passes: int = 2,
+        max_trim_passes: int = 1,
         min_target_tokens: int = 100,
         max_retries: int = 3,
     ) -> None:
@@ -70,6 +70,12 @@ class Synthesizer:
         self.model = model
         self.target_ratio = target_ratio
         self.tolerance = tolerance
+        # One pass, not two. A trim pass costs a whole chapter regeneration and
+        # returns about 6% of its length, because the model's output tracks the
+        # text it is given rather than the word count it is told. Two passes
+        # therefore bought ~12% for twice the price of the most expensive call in
+        # the pipeline, and the length that matters is set by the condense ratio
+        # long before this loop runs (see condenser.CONDENSE_ASK_FACTOR).
         self.max_trim_passes = max_trim_passes
         # Retry a malformed-JSON pass a few times; if it keeps failing, keep the current text
         # instead of crashing the run.
@@ -185,10 +191,17 @@ class Synthesizer:
             trimmed = await self._synth_pass(segments, target_tokens, smooth=False)
             if trimmed is None:
                 break  # nothing usable on this trim pass; keep what we have
-            passes += 1
-            blocks, trim_degraded = trimmed
+            passes += 1  # counted even if discarded below: it was generated and paid for
+            trimmed_blocks, trim_degraded = trimmed
+            trimmed_tokens = sum(block_tokens(b) for b in trimmed_blocks)
+            if trimmed_tokens >= output_tokens:
+                # The pass bought nothing — measured at exactly zero tokens on one
+                # chapter, which then paid for a second pass on the same premise.
+                # A rewrite that came back no shorter is the model declining to cut
+                # further, and the next request is the same prompt at the same model.
+                break
+            blocks, output_tokens = trimmed_blocks, trimmed_tokens
             degraded += trim_degraded
-            output_tokens = sum(block_tokens(b) for b in blocks)
 
         return self._result(
             first,
@@ -268,8 +281,8 @@ def _chapter_fingerprint(
     with identical condensed text would collide.
     """
     fp = Fingerprint()
-    # See the condenser's note: 3 is the block-addressed contract.
-    fp.field("condense_block_format:3")
+    # Kept in step with the condenser's tag; see its note for what each bump means.
+    fp.field("condense_block_format:4")
     fp.field(model)
     fp.field(repr(target_ratio))
     fp.field(json.dumps([tolerance, max_trim_passes, min_target_tokens]))

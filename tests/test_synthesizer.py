@@ -117,16 +117,57 @@ async def test_over_budget_triggers_trim_and_reduces() -> None:
     assert chapters[0].output_tokens <= chapters[0].target_tokens * 1.15
 
 
-async def test_trim_loop_is_bounded() -> None:
-    chunks = [
+def _over_budget_chapter() -> list[CondensedChunk]:
+    """Two chunks totalling 400 input tokens, so the target is 120 and the cap 138."""
+    return [
         _cc([ParagraphBlock(text="x" * 50)], idx=0, input_tokens=200),
         _cc([ParagraphBlock(text="y" * 50)], idx=0, input_tokens=200),
     ]
-    long = _texts("word " * 200, "word " * 200)  # always over budget
-    provider = QueueProvider([long])
-    chapters = await Synthesizer(provider, "m", max_trim_passes=2).synthesize(chunks)
+
+
+async def test_trim_loop_is_bounded() -> None:
+    """Shrinking every pass, the cap is what stops it."""
+    replies = [_texts("word " * n) for n in (200, 180, 160)]  # each shorter, none in budget
+    provider = QueueProvider(replies)
+    chapters = await Synthesizer(provider, "m", max_trim_passes=2).synthesize(
+        _over_budget_chapter()
+    )
     assert chapters[0].trim_passes == 2  # capped
     assert provider.calls == 3  # 1 smoothing + 2 trim passes
+
+
+async def test_trim_stops_when_a_pass_buys_nothing() -> None:
+    """A rewrite that came back no shorter is the model declining to cut further.
+
+    Measured on a real chapter: a trim pass returned the identical token count and
+    the loop paid for a second one on the same premise. The next request would be
+    the same prompt at the same model, so there is nothing left to buy.
+    """
+    provider = QueueProvider([_texts("word " * 200)])  # same reply forever
+    chapters = await Synthesizer(provider, "m", max_trim_passes=2).synthesize(
+        _over_budget_chapter()
+    )
+    assert chapters[0].trim_passes == 1  # tried once, not twice
+    assert provider.calls == 2  # 1 smoothing + the single trim
+
+
+async def test_a_trim_pass_that_grew_the_text_is_discarded() -> None:
+    """Paying to move backwards is worse than paying for nothing."""
+    provider = QueueProvider([_texts("word " * 160), _texts("word " * 400)])
+    chapters = await Synthesizer(provider, "m", max_trim_passes=2).synthesize(
+        _over_budget_chapter()
+    )
+    assert provider.calls == 2
+    assert chapters[0].output_tokens < 400  # the longer rewrite was not kept
+
+
+async def test_default_is_a_single_trim_pass() -> None:
+    """Two passes bought ~12% for twice the price of the pipeline's dearest call."""
+    replies = [_texts("word " * n) for n in (200, 180, 160)]
+    provider = QueueProvider(replies)
+    chapters = await Synthesizer(provider, "m").synthesize(_over_budget_chapter())
+    assert chapters[0].trim_passes == 1
+    assert provider.calls == 2
 
 
 async def test_code_only_chapter_passthrough_no_call() -> None:

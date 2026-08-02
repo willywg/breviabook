@@ -7,6 +7,31 @@ All notable changes to BreviaBook are documented here. The format follows
 ## [Unreleased]
 
 ### Changed
+- **Length is now steered where steering works, and the trim loop stops paying for nothing.**
+  Measured across eight chapters: a synthesis pass's output tracks the text it is given
+  (0.93x–1.00x) rather than the word count it is told, so every pass shaved the same ~6% at the
+  price of regenerating a whole chapter — and one pass returned the identical token count, after
+  which the loop bought a second on the same premise. Three changes follow from that:
+  the condense prompt now asks for `CONDENSE_ASK_FACTOR` (0.85) of the target, because the model
+  condenses to ~1.2x whatever ratio it is asked and the per-chunk prompt is the one place the
+  ratio actually steers the result; the trim loop stops when a pass comes back no shorter, and
+  discards a pass that came back longer; and `max_trim_passes` defaults to 1 rather than 2.
+
+  Full book, 51 chapters, 30% target, `gemini-3.6-flash`:
+
+  | | before | after |
+  |---|---|---|
+  | cost | $3.27 | **$2.72** |
+  | LLM calls | 220 | 198 |
+  | completion tokens | 310,154 | 250,467 |
+  | output ratio | 34.2% | 33.9% |
+  | chapters entering synthesis inside the trim threshold | 16/51 | **26/51** |
+
+  The same output for 17% less: what was removed was waste, not text. The output ratio barely
+  moves because the trim passes that are gone were buying real length — just at roughly the
+  dearest price in the pipeline.
+
+### Changed
 - **Condensed blocks now say where they came from.** Every entry in a `[TEXT n]` array carries
   `"block": k`, naming its source block, instead of being matched back by position. Position
   could not express "these two paragraphs became one" without also losing which entry used to

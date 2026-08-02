@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Callable
+from typing import Final
 
 from pydantic import BaseModel, Field, ValidationError
 
@@ -48,6 +49,24 @@ __all__ = [
     "Condenser",
     "assemble_condensed_document",
 ]
+
+# The model condenses to roughly 1.2x whatever ratio it is asked for. Measured
+# across eight multi-chunk chapters of a 479-page book: chapters reached the
+# synthesis pass at 1.11x-1.41x of their target, median 1.22x, from a prompt that
+# had asked for the target exactly.
+#
+# Correcting it here rather than later is the whole point. Synthesis cannot fix a
+# length problem: its output tracks the text it is given (0.93x-1.00x) and not the
+# word count it is told, so every pass shaves the same ~6% no matter what target
+# it is handed, at the price of regenerating a whole chapter. The per-chunk
+# condense prompt is the one place in the pipeline where the ratio actually steers
+# the result — it is what took this book from 57% to ~36% of its input.
+#
+# 0.85 rather than the 0.82 that would centre the correction: overshooting the
+# target leaves the reader with more of their book than they asked for, while
+# undershooting silently deletes it, and those are not symmetric mistakes. This is
+# a first calibration from one book — re-derive it before treating it as settled.
+CONDENSE_ASK_FACTOR: Final = 0.85
 
 
 class CondensedChunk(BaseModel):
@@ -149,7 +168,7 @@ class Condenser:
             return self._passthrough(chunk, segments)
 
         body, image_ids = _serialize(segments)
-        messages = build_condense_messages(body, self.target_ratio, image_ids)
+        messages = build_condense_messages(body, self.target_ratio * CONDENSE_ASK_FACTOR, image_ids)
         total_runs = sum(1 for seg in segments if seg.kind == "text")
         for _attempt in range(self.max_retries):
             raw = await self.provider.generate(messages, self.model)
@@ -233,10 +252,11 @@ def _chunk_fingerprint(chunk: Chunk, model: str, target_ratio: float) -> str:
     unlike the translator's key-sorted unit batches.
     """
     fp = Fingerprint()
-    # Bumped to 3 when entries began addressing their source block: the prompt
-    # and the parser both changed, so a record written under the old contract
-    # would be a different answer to a different question.
-    fp.field("condense_block_format:3")
+    # 3 when entries began addressing their source block; 4 when the prompt began
+    # asking for CONDENSE_ASK_FACTOR of the target instead of the target itself.
+    # Both changed what the model is asked, so a record written under an older tag
+    # is an answer to a different question, not a cached answer to this one.
+    fp.field("condense_block_format:4")
     fp.field(model)
     fp.field(repr(target_ratio))
     blocks_dump = [b.model_dump(mode="json") for b in chunk.blocks]

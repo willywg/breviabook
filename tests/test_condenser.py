@@ -63,6 +63,33 @@ def _chunk(blocks: list, *, idx: int = 0, title: str = "A"):
     return Chunker(max_tokens=100_000).chunk(doc)[0]
 
 
+class RecordingProvider(ScriptedProvider):
+    """A ScriptedProvider that also keeps the prompt it was sent."""
+
+    def __init__(self, reply: str) -> None:
+        super().__init__(reply)
+        self.prompts: list[str] = []
+
+    async def generate(self, messages: list[Message], model: str, **opts: object) -> str:
+        self.prompts.append("\n".join(str(m["content"]) for m in messages))
+        return await super().generate(messages, model, **opts)
+
+
+async def test_condense_asks_below_the_target_to_land_on_it() -> None:
+    """The model condenses to ~1.2x what it is asked, so the ask absorbs the bias.
+
+    Synthesis cannot correct this later: its output tracks the text it is given
+    rather than the word count it is told. The per-chunk prompt is the one place
+    the ratio actually steers the result.
+    """
+    chunk = _chunk([ParagraphBlock(text="A long intro paragraph with filler.")])
+    provider = RecordingProvider(json.dumps({"texts": {"1": "Short."}}))
+    await Condenser(provider, "m", target_ratio=0.30).condense_chunk(chunk)
+
+    assert "26%" in provider.prompts[0]  # 30% * 0.85, rounded
+    assert "30%" not in provider.prompts[0]
+
+
 async def test_condense_preserves_code_and_order() -> None:
     chunk = _chunk(
         [
