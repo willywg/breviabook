@@ -6,6 +6,43 @@ All notable changes to BreviaBook are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-08-02
+
+Condensation reaches the ratio it is asked for, and the dry run tells the truth
+about what that will cost. Both were measured on full runs of a 479-page book
+rather than reasoned about.
+
+### Added
+- **`breviabook.condense.cost_model` — the pass-structure cost model.** `--dry-run`
+  predicted one clean pass per stage and came in at **0.44x–0.53x of the real bill**,
+  always low, which is the wrong direction to be wrong in when the number is shown as
+  money. Four things were missing, all of them measurable rather than guessable:
+  synthesis re-runs whole chapters when the first pass overshoots; the condense prompt
+  carries a structure contract, so its per-call overhead is ~900 tokens rather than the
+  250 inherited from the translate command; the model returns JSON containing prose, not
+  prose, which is a **1.53x envelope on the completion side** that Gemini prices at 5x
+  input; and condensation overshoots its target, so every downstream pass reads more
+  than the ratio implies.
+
+  Same book, 51 chapters, 30% target, `gemini-3.6-flash`:
+
+  | | dry run before | dry run after | actual |
+  |---|---|---|---|
+  | run 1 | $1.44 | **$3.02** | $3.27 |
+  | run 2 | $1.44 | **$3.02** | $2.72 |
+
+  One formula, no per-run tuning, landing at 0.92x and 1.11x — and slightly high rather
+  than low. `estimate_condense` now calls it, so `--dry-run` and any embedder share a
+  single formula instead of two that drift. `ESTIMATE_SPREAD` is exported for callers
+  that should quote a range: these constants come from one book, and a point estimate to
+  four decimals claims a precision the measurement does not have.
+
+  `tests/test_cost_model.py` pins the prompt-overhead constants by building a real prompt
+  and counting it, so editing a prompt fails a test instead of quietly skewing a price.
+
+- `degraded_runs` on `CondensedChunk` and `SynthesizedChapter`, surfaced as a single aggregate
+  pipeline warning rather than one line per run.
+
 ### Changed
 - **Length is now steered where steering works, and the trim loop stops paying for nothing.**
   Measured across eight chapters: a synthesis pass's output tracks the text it is given
@@ -31,7 +68,6 @@ All notable changes to BreviaBook are documented here. The format follows
   moves because the trim passes that are gone were buying real length — just at roughly the
   dearest price in the pipeline.
 
-### Changed
 - **Condensed blocks now say where they came from.** Every entry in a `[TEXT n]` array carries
   `"block": k`, naming its source block, instead of being matched back by position. Position
   could not express "these two paragraphs became one" without also losing which entry used to
@@ -78,10 +114,6 @@ All notable changes to BreviaBook are documented here. The format follows
 - **Chapter-level failures skipped length control**, which is the only stage that enforces
   `target_ratio` — so a JSON shape disagreement quietly became a book at ~57% of its input when
   30% was asked for. With the above, the trim loop runs.
-
-### Added
-- `degraded_runs` on `CondensedChunk` and `SynthesizedChapter`, surfaced as a single aggregate
-  pipeline warning rather than one line per run.
 
 ## [0.4.0] — 2026-07-19
 
@@ -192,6 +224,7 @@ preserving code, tables, and meaningful figures, with optional same-pass transla
 - `--dry-run` token/page/compression/cost estimate; per-run usage report; compression and
   approximate page counts; `--resume` from a JSONL checkpoint.
 
+[0.5.0]: https://github.com/willywg/breviabook/releases/tag/v0.5.0
 [0.4.0]: https://github.com/willywg/breviabook/releases/tag/v0.4.0
 [0.3.0]: https://github.com/willywg/breviabook/releases/tag/v0.3.0
 [0.2.0]: https://github.com/willywg/breviabook/releases/tag/v0.2.0

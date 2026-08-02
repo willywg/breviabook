@@ -8,13 +8,20 @@ so this is unit-testable with the mock provider, and the PDF renderer is only to
 
 from __future__ import annotations
 
-import math
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from breviabook.condense.chunker import Chunker, count_document_tokens
 from breviabook.condense.condenser import Condenser
+from breviabook.condense.cost_model import (
+    SYNTH_PROMPT_OVERHEAD,
+    estimate_condense_tokens,
+    estimate_translate_only_tokens,
+)
+from breviabook.condense.cost_model import (
+    TRANSLATION_EXPANSION as _TRANSLATION_EXPANSION,
+)
 from breviabook.condense.synthesizer import Synthesizer, synthesized_to_document
 from breviabook.config import DEFAULT_CONCURRENCY
 from breviabook.images.selector import ImageSelector
@@ -46,11 +53,12 @@ SUPPORTED_FORMATS = ("md", "epub", "pdf")
 # Used only for human-friendly "~N pages" reporting, never for any pipeline decision.
 TOKENS_PER_PAGE = 450
 
-# Translation-only cost model constants (PRP feat/translate-command).
-# TRANSLATION_EXPANSION: target-language expansion factor (EN→ES runs ~10–20% longer).
-# PROMPT_OVERHEAD_PER_BATCH: per-batch prompt boilerplate (~250 tokens).
-TRANSLATION_EXPANSION = 1.15
-PROMPT_OVERHEAD_PER_BATCH = 250
+# Re-exported for callers that grew up importing them from here. The cost model
+# itself lives in breviabook.condense.cost_model, next to the measurements that
+# produced it — see that module for why the old PROMPT_OVERHEAD_PER_BATCH of 250
+# was three times too small for a prompt that carries a structure contract.
+TRANSLATION_EXPANSION = _TRANSLATION_EXPANSION
+PROMPT_OVERHEAD_PER_BATCH = SYNTH_PROMPT_OVERHEAD
 
 Log = Callable[[str], None]
 
@@ -169,45 +177,46 @@ def estimate_condense(
 
     if translate_only:
         units = count_translatable_units(doc)
-        batches = math.ceil(units / DEFAULT_UNITS_PER_BATCH) if units else 0
-        prompt_est = round(input_tokens + PROMPT_OVERHEAD_PER_BATCH * batches)
-        completion_est = round(input_tokens * TRANSLATION_EXPANSION)
+        passes = estimate_translate_only_tokens(
+            input_tokens=input_tokens,
+            translatable_units=units,
+            units_per_batch=DEFAULT_UNITS_PER_BATCH,
+        )
         tr_cost: float | None = None
         if provider_name and model:
-            tr_cost = estimate_cost(provider_name.lower(), model, prompt_est, completion_est)
+            tr_cost = estimate_cost(provider_name.lower(), model, passes.prompt, passes.completion)
         return Estimate(
             input_tokens=input_tokens,
-            estimated_output_tokens=completion_est,
+            estimated_output_tokens=round(input_tokens * TRANSLATION_EXPANSION),
             chapters=len(doc.chapters),
             chunks=0,
-            estimated_prompt_tokens=prompt_est,
-            estimated_completion_tokens=completion_est,
+            estimated_prompt_tokens=passes.prompt,
+            estimated_completion_tokens=passes.completion,
             estimated_cost_usd=tr_cost,
             translatable_units=units,
-            batches=batches,
+            batches=passes.calls,
         )
 
     chunks = Chunker(chunk_tokens).chunk(doc)
-    n_chunks = len(chunks)
-
-    # Approximate token flow across passes: condense (reads full input), synthesis (reads the
-    # condensed text), and translation if requested; plus per-chunk prompt overhead.
-    out = input_tokens * target_ratio
-    translate = bool(translate_to)
-    prompt_est = round(input_tokens + out + (out if translate else 0) + 250 * n_chunks)
-    completion_est = round(out * (2 + (1 if translate else 0)))
+    passes = estimate_condense_tokens(
+        input_tokens=input_tokens,
+        chapters=len(doc.chapters),
+        chunks=len(chunks),
+        target_ratio=target_ratio,
+        translate=bool(translate_to),
+    )
 
     cost: float | None = None
     if provider_name and model:
-        cost = estimate_cost(provider_name.lower(), model, prompt_est, completion_est)
+        cost = estimate_cost(provider_name.lower(), model, passes.prompt, passes.completion)
 
     return Estimate(
         input_tokens=input_tokens,
         estimated_output_tokens=round(input_tokens * target_ratio),
         chapters=len(doc.chapters),
-        chunks=n_chunks,
-        estimated_prompt_tokens=prompt_est,
-        estimated_completion_tokens=completion_est,
+        chunks=len(chunks),
+        estimated_prompt_tokens=passes.prompt,
+        estimated_completion_tokens=passes.completion,
         estimated_cost_usd=cost,
     )
 

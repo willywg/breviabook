@@ -16,6 +16,7 @@ from rich.console import Console
 from rich.table import Table
 
 from breviabook import __version__
+from breviabook.condense.cost_model import spread
 from breviabook.config import DEFAULT_CONCURRENCY, Settings, load_settings
 from breviabook.llm.base import LLMProvider
 from breviabook.llm.factory import get_provider
@@ -113,7 +114,12 @@ def _print_dry_run_table(
     table.add_row("LLM prompt tokens (est.)", f"{est.estimated_prompt_tokens:,}")
     table.add_row("LLM completion tokens (est.)", f"{est.estimated_completion_tokens:,}")
     if est.estimated_cost_usd is not None:
+        # A range, not a point. The cost model is calibrated on two runs of one
+        # book; quoting four decimals alone would claim a precision it does not
+        # have. The point estimate is still shown — it is the middle of the band.
+        low, high = spread(est.estimated_cost_usd)
         table.add_row("estimated cost", f"~${est.estimated_cost_usd:.4f}")
+        table.add_row("likely range", f"${low:.2f} – ${high:.2f}")
     else:
         table.add_row("estimated cost", "n/a (model not priced / local)")
     console.print(table)
