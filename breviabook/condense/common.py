@@ -124,7 +124,14 @@ def parse_condensed_run(raw: object | None, source_blocks: list[Block]) -> list[
         return [ParagraphBlock(text=para) for para in paras]
 
     if isinstance(raw, list):
+        # Preferred form: every entry says which source block it came from, so the
+        # mapping is carried in the response instead of inferred from position.
+        addressed = _addressed_entries(raw)
+        if addressed is not None:
+            return _parse_addressed_run(addressed, source_blocks)
+
         if len(raw) != len(source_blocks):
+            # Positional fallback, for a model that answered without addresses.
             # Only a run carrying a list or a quote needs its blocks to line up:
             # those have a type to preserve, and losing the alignment means losing
             # which entry was the list. A run of nothing but paragraphs has no such
@@ -171,6 +178,74 @@ def parse_run_or_keep(raw: object | None, source_blocks: list[Block]) -> tuple[l
         return list(source_blocks), True
 
 
+def _addressed_entries(raw: list[object]) -> list[tuple[int, dict[str, object]]] | None:
+    """The ``(block number, entry)`` pairs, when *every* entry names its source.
+
+    All-or-nothing on purpose: a half-addressed array is a model that lost track
+    of the contract mid-response, and guessing which half to trust is worse than
+    falling back to the positional reading. ``None`` means "not this form".
+    """
+    pairs: list[tuple[int, dict[str, object]]] = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            return None
+        index = entry.get("block")
+        # `isinstance(True, int)` is true, and a boolean is not a block number.
+        if isinstance(index, bool):
+            return None
+        if isinstance(index, str) and index.strip().isdigit():
+            index = int(index)
+        if not isinstance(index, int):
+            return None
+        pairs.append((index, entry))
+    return pairs or None
+
+
+def _parse_addressed_run(
+    pairs: list[tuple[int, dict[str, object]]], source_blocks: list[Block]
+) -> list[Block]:
+    """Rebuild a run from entries that name their source block.
+
+    This is the form that makes condensing and structure compatible. Position
+    could never express "these two paragraphs became one" without also losing
+    which entry used to be the list; an explicit address expresses both. So a
+    paragraph may be merged into a neighbour (no entry names it) or split across
+    several (several entries name it), while a list or a quote must still be
+    accounted for exactly once — its type is the thing there is to lose.
+    """
+    count = len(source_blocks)
+    out: list[Block] = []
+    times_named: dict[int, int] = {}
+    previous = 0
+
+    for index, entry in pairs:
+        if not 1 <= index <= count:
+            raise CondenseError(f"entry names block {index}, but this run has {count}")
+        if index < previous:
+            # Reordering prose silently rewrites the argument the author made.
+            raise CondenseError(f"block {index} follows block {previous}; entries must ascend")
+        previous = index
+
+        source = source_blocks[index - 1]
+        seen = times_named.get(index, 0)
+        if seen and not isinstance(source, ParagraphBlock):
+            raise CondenseError(f"block {index} is a {source.type} and cannot be split")
+        times_named[index] = seen + 1
+
+        block = _parse_block_entry(entry, source)
+        if seen and isinstance(block, ParagraphBlock):
+            # A split copies the source's shell onto the first piece only: one
+            # anchor id cannot name two places, and duplicating it would break
+            # every link that points at it.
+            block = ParagraphBlock(text=block.text, align=block.align)
+        out.append(block)
+
+    for position, source in enumerate(source_blocks, start=1):
+        if position not in times_named and isinstance(source, (ListBlock, QuoteBlock)):
+            raise CondenseError(f"block {position} is a {source.type} and cannot be dropped")
+    return out
+
+
 def _parse_block_entry(entry: object, source: Block) -> Block:
     if isinstance(source, ParagraphBlock):
         text = _paragraph_text(entry)
@@ -186,7 +261,11 @@ def _parse_block_entry(entry: object, source: Block) -> Block:
 def _paragraph_text(entry: object) -> str:
     if isinstance(entry, str):
         text = entry.strip()
-    elif isinstance(entry, dict) and entry.get("type") == "paragraph":
+    # A missing "type" is fine when the entry addresses its source block: the
+    # type is the source's, and we would ignore a contradicting one anyway. A
+    # *wrong* type still fails — that is the model trying to turn prose into a
+    # list, which is a rewrite, not a condensation.
+    elif isinstance(entry, dict) and entry.get("type") in (None, "paragraph"):
         raw = entry.get("text")
         text = raw.strip() if isinstance(raw, str) else ""
     else:

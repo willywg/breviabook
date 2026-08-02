@@ -9,29 +9,39 @@ from __future__ import annotations
 
 from breviabook.llm.base import Message
 
-_CONDENSE_STRUCTURE_RULES = """\
-- Each [TEXT n] segment lists sub-blocks as [BLOCK k type=paragraph|list|quote]. When any \
-sub-block is type=list or type=quote, return a JSON **array** for that [TEXT n] key — one \
-object per sub-block, same count and types, in order. Example:
-  {"1": [{"type": "paragraph", "text": "..."}, {"type": "list", "items": ["a", "b"], \
-"ordered": false}, {"type": "quote", "text": "..."}]}
-- Condense content inside each block only; do not merge, split, or reorder blocks.
+# Every entry names the source block it came from. Position used to carry that
+# mapping, which forced an exact one-entry-per-block count — and merging two
+# paragraphs into one is precisely what condensing asks for, so the contract
+# contradicted the instruction and the parser rejected the model for obeying it.
+# An explicit address lets prose merge and split freely while a list stays
+# identifiable as the list.
+_BLOCK_ADDRESS_RULES = """\
+- Each [TEXT n] segment lists its sub-blocks as [BLOCK k type=paragraph|list|quote]. Return a \
+JSON **array** for that [TEXT n] key in which every entry names the source block it came from \
+with "block": k. Example:
+  {"1": [{"block": 1, "type": "paragraph", "text": "..."}, {"block": 2, "type": "list", \
+"items": ["a", "b"], "ordered": false}, {"block": 3, "type": "quote", "text": "..."}]}
+- Because each entry names its source, you may merge several paragraph blocks into one entry \
+(name the first of them) or split one paragraph block across several entries (repeat the same \
+"block"). Keep entries in ascending block order.
+- Every type=list and type=quote block must appear exactly once and keep its own type. Never \
+fold a list or a quote into a paragraph, and never drop one.
 - For lists: return condensed plain strings in "items"; match the ordered= label.
-- For quotes: return condensed plain string in "text".
-- When a [TEXT n] segment has only [BLOCK … type=paragraph] sub-blocks, you may return either \
-a plain string (blank-line separated paragraphs) or an array of {"type": "paragraph", "text": \
-"..."} objects."""
+- For quotes: return condensed plain string in "text"."""
 
-_SYNTH_STRUCTURE_RULES = """\
-- Each [TEXT n] segment lists sub-blocks as [BLOCK k type=paragraph|list|quote]. When any \
-sub-block is type=list or type=quote, return a JSON **array** for that [TEXT n] key — one \
-object per sub-block, same count and types, in order.
-- Smooth transitions and remove cross-segment repetition **within** each block; preserve block \
-types and order — do not flatten lists or quotes into plain paragraphs.
-- For lists: return condensed plain strings in "items"; match the ordered= label.
-- For quotes: return condensed plain string in "text".
-- When a [TEXT n] segment has only paragraph sub-blocks, you may return either a plain string \
-or an array of {"type": "paragraph", "text": "..."} objects."""
+_PARAGRAPH_ONLY_SHORTCUT = """\
+- When a [TEXT n] segment has only [BLOCK … type=paragraph] sub-blocks, you may instead return \
+a plain string with paragraphs separated by blank lines."""
+
+_CONDENSE_STRUCTURE_RULES = f"""\
+{_BLOCK_ADDRESS_RULES}
+- Condense the content of each block; do not reorder them.
+{_PARAGRAPH_ONLY_SHORTCUT}"""
+
+_SYNTH_STRUCTURE_RULES = f"""\
+{_BLOCK_ADDRESS_RULES}
+- Smooth transitions and remove cross-segment repetition; do not reorder blocks.
+{_PARAGRAPH_ONLY_SHORTCUT}"""
 
 CONDENSE_SYSTEM_PROMPT = (
     "You are an expert technical editor. You condense technical book content so it reads "

@@ -137,6 +137,139 @@ def test_empty_array_drops_a_paragraph_run_like_an_empty_string() -> None:
     assert parse_condensed_run([], [ParagraphBlock(text="filler")]) == []
 
 
+# --------------------------------------------------------------------------- #
+# Block-addressed entries — the contract that lets prose merge without losing
+# which entry was the list.
+# --------------------------------------------------------------------------- #
+
+
+def _mixed_run() -> list[ListBlock | ParagraphBlock | QuoteBlock]:
+    """Two paragraphs, a list, a quote — the shape that used to degrade."""
+    return [
+        ParagraphBlock(text="First long paragraph."),
+        ParagraphBlock(text="Second long paragraph."),
+        ListBlock(items=["alpha", "beta"], ordered=False, marker_type="square"),
+        QuoteBlock(text="A long citation.", align="center"),
+    ]
+
+
+def test_addressed_entries_may_merge_paragraphs_beside_a_list() -> None:
+    """The whole point: blocks 1 and 2 become one entry, the list still lands."""
+    out = parse_condensed_run(
+        [
+            {"block": 1, "type": "paragraph", "text": "Both paragraphs, briefly."},
+            {"block": 3, "type": "list", "items": ["a", "b"]},
+            {"block": 4, "type": "quote", "text": "Short citation."},
+        ],
+        _mixed_run(),
+    )
+    assert [b.type for b in out] == ["paragraph", "list", "quote"]
+    lst = out[1]
+    assert isinstance(lst, ListBlock)
+    assert lst.items == ["a", "b"]
+    assert lst.marker_type == "square"  # presentation still comes from the source
+    assert isinstance(out[2], QuoteBlock) and out[2].align == "center"
+
+
+def test_addressed_entries_may_split_one_paragraph() -> None:
+    source = [ParagraphBlock(text="One dense paragraph.", anchor_id="sec-1")]
+    out = parse_condensed_run(
+        [
+            {"block": 1, "type": "paragraph", "text": "First half."},
+            {"block": 1, "type": "paragraph", "text": "Second half."},
+        ],
+        source,
+    )
+    assert [b.text for b in out] == ["First half.", "Second half."]
+    # One anchor cannot name two places: only the first piece keeps it.
+    assert [b.anchor_id for b in out if isinstance(b, ParagraphBlock)] == ["sec-1", None]
+
+
+def test_addressed_entry_may_omit_the_type() -> None:
+    """The address already determines the type; a missing one is not a violation."""
+    out = parse_condensed_run([{"block": 1, "text": "Short."}], [ParagraphBlock(text="Long.")])
+    assert [b.text for b in out] == ["Short."]
+
+
+def test_addressed_entries_accept_a_numeric_string() -> None:
+    """Models write "2" as often as 2, and the meaning is not in doubt."""
+    out = parse_condensed_run([{"block": "1", "text": "Short."}], [ParagraphBlock(text="Long.")])
+    assert [b.text for b in out] == ["Short."]
+
+
+def test_addressed_run_refuses_to_drop_a_list() -> None:
+    """A paragraph may be absorbed by its neighbour; a list has a type to lose."""
+    with pytest.raises(CondenseError, match="cannot be dropped"):
+        parse_condensed_run([{"block": 1, "text": "Only the prose survived."}], _mixed_run())
+
+
+def test_addressed_run_refuses_to_flatten_a_list_into_a_paragraph() -> None:
+    """Naming the list block does not license answering with prose for it."""
+    with pytest.raises(CondenseError, match="expected list block"):
+        parse_condensed_run(
+            [
+                {"block": 1, "type": "paragraph", "text": "Prose."},
+                {"block": 3, "type": "paragraph", "text": "alpha and beta"},
+                {"block": 4, "type": "quote", "text": "Citation."},
+            ],
+            _mixed_run(),
+        )
+
+
+def test_addressed_run_refuses_to_split_a_list() -> None:
+    with pytest.raises(CondenseError, match="cannot be split"):
+        parse_condensed_run(
+            [
+                {"block": 1, "type": "paragraph", "text": "Prose."},
+                {"block": 3, "type": "list", "items": ["a"]},
+                {"block": 3, "type": "list", "items": ["b"]},
+                {"block": 4, "type": "quote", "text": "Citation."},
+            ],
+            _mixed_run(),
+        )
+
+
+def test_addressed_run_refuses_reordering() -> None:
+    """Reordering prose rewrites the argument the author made."""
+    source = [ParagraphBlock(text="First."), ParagraphBlock(text="Second.")]
+    with pytest.raises(CondenseError, match="must ascend"):
+        parse_condensed_run(
+            [
+                {"block": 2, "type": "paragraph", "text": "Second, briefly."},
+                {"block": 1, "type": "paragraph", "text": "First, briefly."},
+            ],
+            source,
+        )
+
+
+def test_addressed_run_refuses_a_block_number_that_does_not_exist() -> None:
+    with pytest.raises(CondenseError, match="but this run has 1"):
+        parse_condensed_run([{"block": 7, "text": "Short."}], [ParagraphBlock(text="Long.")])
+
+
+def test_half_addressed_array_falls_back_to_positional_reading() -> None:
+    """A model that lost the contract mid-response gets read the old way.
+
+    Guessing which half to trust would be worse: here the counts still line up,
+    so the positional reading is well defined and nothing is lost.
+    """
+    source = [ParagraphBlock(text="First."), ListBlock(items=["a"])]
+    out = parse_condensed_run(
+        [{"block": 1, "type": "paragraph", "text": "Short."}, {"type": "list", "items": ["b"]}],
+        source,
+    )
+    assert [b.type for b in out] == ["paragraph", "list"]
+
+
+def test_positional_array_still_works_unaddressed() -> None:
+    """The old form stays valid — this change may only ever add a way to answer."""
+    source = [ParagraphBlock(text="Intro."), ListBlock(items=["a", "b"])]
+    out = parse_condensed_run(
+        [{"type": "paragraph", "text": "Short."}, {"type": "list", "items": ["one"]}], source
+    )
+    assert [b.type for b in out] == ["paragraph", "list"]
+
+
 def test_parse_run_or_keep_falls_back_to_source() -> None:
     source = [ParagraphBlock(text="p"), QuoteBlock(text="q")]
     blocks, degraded = parse_run_or_keep([{"type": "paragraph", "text": "merged"}], source)

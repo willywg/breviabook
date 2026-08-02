@@ -233,7 +233,10 @@ def _chunk_fingerprint(chunk: Chunk, model: str, target_ratio: float) -> str:
     unlike the translator's key-sorted unit batches.
     """
     fp = Fingerprint()
-    fp.field("condense_block_format:2")
+    # Bumped to 3 when entries began addressing their source block: the prompt
+    # and the parser both changed, so a record written under the old contract
+    # would be a different answer to a different question.
+    fp.field("condense_block_format:3")
     fp.field(model)
     fp.field(repr(target_ratio))
     blocks_dump = [b.model_dump(mode="json") for b in chunk.blocks]

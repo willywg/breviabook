@@ -283,6 +283,78 @@ async def test_one_unreadable_run_does_not_cost_the_whole_chapter() -> None:
     assert [b.items for b in lists] == [["first", "second"]]
 
 
+def _mixed_run_chapter() -> list[CondensedChunk]:
+    """A chapter whose second run holds two paragraphs *and* a list.
+
+    The exact shape that produced the residual overshoot: the model merges the
+    two paragraphs, as the prompt asks, and under a positional contract that
+    shifted the list out of alignment and cost the whole run its trim.
+    """
+    return [
+        _cc([ParagraphBlock(text="intro a"), ParagraphBlock(text="intro b")], input_tokens=200),
+        _cc(
+            [
+                CodeBlock(text="print(1)", language="python"),
+                ParagraphBlock(text="first point at length"),
+                ParagraphBlock(text="second point at length"),
+                ListBlock(items=["first", "second"]),
+            ],
+            input_tokens=200,
+        ),
+    ]
+
+
+async def test_addressed_reply_merges_paragraphs_without_degrading() -> None:
+    """The fix, end to end: a merge that used to degrade now condenses cleanly.
+
+    Run 2's two paragraphs collapse into one entry and the list still lands as a
+    list — so the run is trimmed rather than kept at its source length, which is
+    what the overshoot was made of.
+    """
+    reply = json.dumps(
+        {
+            "texts": {
+                "1": [{"block": 1, "type": "paragraph", "text": "smoothed intro"}],
+                "2": [
+                    {"block": 1, "type": "paragraph", "text": "both points, briefly"},
+                    {"block": 3, "type": "list", "items": ["first", "second"]},
+                ],
+            }
+        }
+    )
+    provider = QueueProvider([reply])
+    out = await Synthesizer(provider, "m", target_ratio=0.50).synthesize(_mixed_run_chapter())
+
+    chapter = out[0]
+    assert chapter.synthesis_failed is False
+    assert chapter.degraded_runs == 0  # the whole point
+
+    texts = [b.text for b in chapter.blocks if isinstance(b, ParagraphBlock)]
+    assert texts == ["smoothed intro", "both points, briefly"]
+    assert "first point at length" not in texts  # merged away, not kept verbatim
+    lists = [b for b in chapter.blocks if isinstance(b, ListBlock)]
+    assert [b.items for b in lists] == [["first", "second"]]
+
+
+async def test_dropping_the_list_still_degrades_that_run() -> None:
+    """Merging prose is licensed; losing a list is not, address or no address."""
+    reply = json.dumps(
+        {
+            "texts": {
+                "1": [{"block": 1, "type": "paragraph", "text": "smoothed intro"}],
+                "2": [{"block": 1, "type": "paragraph", "text": "everything, including the list"}],
+            }
+        }
+    )
+    provider = QueueProvider([reply])
+    out = await Synthesizer(provider, "m", target_ratio=0.50).synthesize(_mixed_run_chapter())
+
+    chapter = out[0]
+    assert chapter.degraded_runs == 1
+    lists = [b for b in chapter.blocks if isinstance(b, ListBlock)]
+    assert [b.items for b in lists] == [["first", "second"]]  # survived intact
+
+
 async def test_every_run_unreadable_still_retries() -> None:
     """A response nothing can be read from is a real failure, and does buy a retry."""
     # Run 1 gets entries that are not paragraphs; run 2 gets a flat string where its

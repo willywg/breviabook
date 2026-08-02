@@ -6,6 +6,32 @@ All notable changes to BreviaBook are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- **Condensed blocks now say where they came from.** Every entry in a `[TEXT n]` array carries
+  `"block": k`, naming its source block, instead of being matched back by position. Position
+  could not express "these two paragraphs became one" without also losing which entry used to
+  be the list, so mixed runs had to choose between condensing and keeping their structure —
+  and the parser rejected whichever one the model gave up. An explicit address expresses both:
+  paragraphs merge and split freely, while a list or a quote must still be accounted for
+  exactly once and keeps its own type. The positional form is still read, so a model that
+  answers the old way loses nothing.
+
+  Measured on the same eight mixed-run chunks of *Site Reliability Engineering*, both passes,
+  against `gemini-3.6-flash`:
+
+  | | before | after |
+  |---|---|---|
+  | runs kept at source wording (synthesis) | 20 | 1 |
+  | arrays returned without an address | 61 | 0 |
+  | end-to-end output ratio (30% target) | 37.4% | 30.5% |
+  | cost | $0.248 | $0.182 |
+
+  Cheaper as well as closer: a run that parses is a run that gets trimmed, so the length-control
+  loop stops burning passes on chapters it cannot move.
+
+  The checkpoint fingerprint moves to `condense_block_format:3`, so a `--resume` across this
+  version recomputes rather than mixing answers to two different contracts.
+
 ### Fixed
 - **Condensation no longer rejects itself for having condensed.** The prompt asks the model to
   smooth and shorten prose, and the parser then demanded one output block per source block —

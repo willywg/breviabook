@@ -268,7 +268,8 @@ def _chapter_fingerprint(
     with identical condensed text would collide.
     """
     fp = Fingerprint()
-    fp.field("condense_block_format:2")
+    # See the condenser's note: 3 is the block-addressed contract.
+    fp.field("condense_block_format:3")
     fp.field(model)
     fp.field(repr(target_ratio))
     fp.field(json.dumps([tolerance, max_trim_passes, min_target_tokens]))
