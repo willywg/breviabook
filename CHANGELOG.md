@@ -6,6 +6,30 @@ All notable changes to BreviaBook are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **`breviabook.condense.calibration` — the length correction is now per model.**
+  `CONDENSE_ASK_FACTOR = 0.85` was measured on Gemini Flash, which overshoots, and
+  then applied to every model. A model that already lands on target got the
+  correction anyway and undershot by the whole factor: `xiaomi/mimo-v2.5` was asked
+  for 25.5% and returned 19.7%, and reading the output showed the missing third was
+  not padding — whole arguments and half the figures were gone, with every
+  structural metric clean. **An unmeasured model is now asked for exactly the
+  target**, because a bias measured on one model is not evidence about another.
+  Gemini Flash keeps its 0.85; `openai/gpt-5.6-luna` gets a provisional 0.67 from a
+  four-run measurement, marked as such in the table.
+- **A warning when a run lands far below its target.** The engine already warned
+  when output came out *longer* than input; the opposite miss was silent, and it is
+  the one that costs the reader content. It is measured before translation, whose
+  expansion would mask it, and it names whether the model was calibrated at all.
+
+### Changed
+- `estimate_condense_tokens()` takes an optional `model` and prices the run with
+  that model's overshoot. Callers that omit it get the previous behaviour.
+- Condense checkpoint records carry the ask factor, so re-calibrating a model
+  invalidates records written under its old calibration instead of reusing an
+  answer to a different question. Existing condense checkpoints are recomputed
+  once (`condense_block_format:4` → `:5`).
+
 ## [0.5.0] — 2026-08-02
 
 Condensation reaches the ratio it is asked for, and the dry run tells the truth

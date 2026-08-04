@@ -12,6 +12,7 @@ from breviabook.condense.condenser import (
     CondensedChunk,
     CondenseError,
     Condenser,
+    _chunk_fingerprint,
     assemble_condensed_document,
 )
 from breviabook.ir.models import (
@@ -75,8 +76,8 @@ class RecordingProvider(ScriptedProvider):
         return await super().generate(messages, model, **opts)
 
 
-async def test_condense_asks_below_the_target_to_land_on_it() -> None:
-    """The model condenses to ~1.2x what it is asked, so the ask absorbs the bias.
+async def test_calibrated_model_is_asked_below_the_target_to_land_on_it() -> None:
+    """A model measured to overshoot is asked for less, so it lands on the target.
 
     Synthesis cannot correct this later: its output tracks the text it is given
     rather than the word count it is told. The per-chunk prompt is the one place
@@ -84,10 +85,32 @@ async def test_condense_asks_below_the_target_to_land_on_it() -> None:
     """
     chunk = _chunk([ParagraphBlock(text="A long intro paragraph with filler.")])
     provider = RecordingProvider(json.dumps({"texts": {"1": "Short."}}))
-    await Condenser(provider, "m", target_ratio=0.30).condense_chunk(chunk)
+    await Condenser(provider, "gemini-3.6-flash", target_ratio=0.30).condense_chunk(chunk)
 
     assert "26%" in provider.prompts[0]  # 30% * 0.85, rounded
     assert "30%" not in provider.prompts[0]
+
+
+async def test_uncalibrated_model_is_asked_for_the_target_exactly() -> None:
+    """An unmeasured model gets no correction — the bug this replaced.
+
+    The factor above was measured on Gemini and used to be applied to every model.
+    A model that already lands at or below target then undershoots by the whole
+    factor, and undershooting deletes content invisibly.
+    """
+    chunk = _chunk([ParagraphBlock(text="A long intro paragraph with filler.")])
+    provider = RecordingProvider(json.dumps({"texts": {"1": "Short."}}))
+    await Condenser(provider, "some/unmeasured-model", target_ratio=0.30).condense_chunk(chunk)
+
+    assert "30%" in provider.prompts[0]
+
+
+def test_recalibrating_a_model_invalidates_its_checkpoint() -> None:
+    """Same model, same target, different ask factor — a record answers the old question."""
+    chunk = _chunk([ParagraphBlock(text="A long intro paragraph with filler.")])
+    a = _chunk_fingerprint(chunk, "gemini-3.6-flash", 0.30, 0.85)
+    b = _chunk_fingerprint(chunk, "gemini-3.6-flash", 0.30, 0.67)
+    assert a != b
 
 
 async def test_condense_preserves_code_and_order() -> None:
@@ -308,7 +331,7 @@ async def test_corrupt_inner_payload_is_recomputed(tmp_path: Path) -> None:
     cp.record(
         chunk.id,
         {
-            "source_hash": _chunk_fingerprint(chunk, "m", 0.30),
+            "source_hash": _chunk_fingerprint(chunk, "m", 0.30, 1.0),
             "chunk": {"id": chunk.id},  # missing required fields
         },
     )
@@ -326,8 +349,8 @@ def test_chunk_fingerprint_is_order_sensitive() -> None:
 
     a = ParagraphBlock(text="alpha")
     b = ParagraphBlock(text="beta")
-    assert _chunk_fingerprint(_chunk([a, b]), "m", 0.3) != _chunk_fingerprint(
-        _chunk([b, a]), "m", 0.3
+    assert _chunk_fingerprint(_chunk([a, b]), "m", 0.3, 1.0) != _chunk_fingerprint(
+        _chunk([b, a]), "m", 0.3, 1.0
     )
 
 

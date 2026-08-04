@@ -75,7 +75,7 @@ class Synthesizer:
         # text it is given rather than the word count it is told. Two passes
         # therefore bought ~12% for twice the price of the most expensive call in
         # the pipeline, and the length that matters is set by the condense ratio
-        # long before this loop runs (see condenser.CONDENSE_ASK_FACTOR).
+        # long before this loop runs (see breviabook.condense.calibration).
         self.max_trim_passes = max_trim_passes
         # Retry a malformed-JSON pass a few times; if it keeps failing, keep the current text
         # instead of crashing the run.

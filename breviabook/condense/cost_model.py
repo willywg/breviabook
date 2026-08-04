@@ -53,6 +53,8 @@ import math
 from dataclasses import dataclass
 from typing import Final
 
+from breviabook.condense.calibration import calibration_for
+
 __all__ = [
     "ESTIMATE_SPREAD",
     "PassTokens",
@@ -81,11 +83,14 @@ SYNTH_PROMPT_OVERHEAD: Final = 500
 JSON_ENVELOPE: Final = 1.55
 
 # Condensation lands above the ratio it is asked for, which is why the condense
-# prompt already asks for CONDENSE_ASK_FACTOR of the target. What is left after
-# that correction is this: chapters reached synthesis at a mean of 1.29x their
-# target. Everything downstream reads and writes that larger text, so the
-# overshoot has to be in the estimate even though the pipeline is trying to
-# remove it.
+# prompt already asks for a fraction of the target. What is left after that
+# correction is this: chapters reached synthesis at a mean of 1.29x their target.
+# Everything downstream reads and writes that larger text, so the overshoot has to
+# be in the estimate even though the pipeline is trying to remove it.
+#
+# Measured on Gemini Flash, and therefore per-model like the ask factor it pairs
+# with — :mod:`breviabook.condense.calibration` holds both. This name stays as the
+# figure an unmeasured model is priced with.
 CONDENSE_OVERSHOOT: Final = 1.30
 
 # A synthesis pass's output tracks the text it is given rather than the word count
@@ -95,7 +100,7 @@ SYNTH_SHAVE: Final = 0.90
 
 # Share of chapters whose first synthesis pass overshoots far enough to buy a trim
 # pass. Measured at 25/51 chapters entering above the trim threshold on the run
-# that had CONDENSE_ASK_FACTOR applied.
+# that had the Gemini ask factor applied.
 TRIM_PASS_SHARE: Final = 0.50
 
 # What one trim pass actually removes. It regenerates a whole chapter to shave
@@ -129,17 +134,23 @@ def estimate_condense_tokens(
     chunks: int,
     target_ratio: float,
     translate: bool = False,
+    model: str | None = None,
 ) -> PassTokens:
     """Predict prompt/completion tokens for a condense run, pass by pass.
 
     ``translate`` adds the same-pass translation of the condensed result.
+
+    ``model`` selects the per-model overshoot from
+    :mod:`breviabook.condense.calibration`; omitting it prices the run with the
+    uncalibrated default, which is what a caller that does not yet know the model
+    should get.
 
     The shape follows the pipeline: one condense call per chunk, one synthesis
     call per chapter, and a trim pass on the share of chapters that overshoot.
     """
     target_tokens = input_tokens * target_ratio
     # What condensation really hands to synthesis, not what it was asked for.
-    condensed = target_tokens * CONDENSE_OVERSHOOT
+    condensed = target_tokens * calibration_for(model).overshoot
     synthesized = condensed * SYNTH_SHAVE
 
     # Phase 4 — condense: reads every chunk once, writes the condensed form.

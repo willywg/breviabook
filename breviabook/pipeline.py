@@ -12,6 +12,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from breviabook.condense.calibration import UNDERSHOOT_WARN_FACTOR, is_calibrated
 from breviabook.condense.chunker import Chunker, count_document_tokens
 from breviabook.condense.condenser import Condenser
 from breviabook.condense.cost_model import (
@@ -204,6 +205,7 @@ def estimate_condense(
         chunks=len(chunks),
         target_ratio=target_ratio,
         translate=bool(translate_to),
+        model=model,
     )
 
     cost: float | None = None
@@ -474,6 +476,20 @@ async def _run_condense(
             "them did not match the expected structure"
         )
     working_doc = synthesized_to_document(doc, chapters)
+
+    # Landing far below target is the miss that costs the reader content, and it is
+    # the one nobody sees: every structural metric stays clean while whole arguments
+    # go missing. Measured here rather than on the final document because
+    # translation expands the text and would mask it. The user asked to keep a share
+    # of their book; if we kept much less, say so.
+    kept_ratio = _document_tokens(working_doc) / input_tokens if input_tokens else 0.0
+    if kept_ratio and kept_ratio < target_ratio * UNDERSHOOT_WARN_FACTOR:
+        cal = "calibrated" if is_calibrated(model) else "not calibrated"
+        warnings.append(
+            f"condensed to {kept_ratio:.0%} of the input against a {target_ratio:.0%} "
+            f"target — more was removed than asked for ({model} is {cal} for this engine; "
+            "see breviabook.condense.calibration)"
+        )
 
     batches_reused = 0
     if translate_to:

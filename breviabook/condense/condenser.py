@@ -21,10 +21,10 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Callable
-from typing import Final
 
 from pydantic import BaseModel, Field, ValidationError
 
+from breviabook.condense.calibration import calibration_for
 from breviabook.condense.chunker import Chunk
 from breviabook.condense.common import (
     CondenseError,
@@ -50,23 +50,19 @@ __all__ = [
     "assemble_condensed_document",
 ]
 
-# The model condenses to roughly 1.2x whatever ratio it is asked for. Measured
-# across eight multi-chunk chapters of a 479-page book: chapters reached the
-# synthesis pass at 1.11x-1.41x of their target, median 1.22x, from a prompt that
-# had asked for the target exactly.
+# Correcting the ratio *here* rather than later is the whole point. Synthesis
+# cannot fix a length problem: its output tracks the text it is given
+# (0.93x-1.00x) and not the word count it is told, so every pass shaves the same
+# ~6% no matter what target it is handed, at the price of regenerating a whole
+# chapter. The per-chunk condense prompt is the one place in the pipeline where
+# the ratio actually steers the result — it is what took the first calibration
+# book from 57% to ~36% of its input.
 #
-# Correcting it here rather than later is the whole point. Synthesis cannot fix a
-# length problem: its output tracks the text it is given (0.93x-1.00x) and not the
-# word count it is told, so every pass shaves the same ~6% no matter what target
-# it is handed, at the price of regenerating a whole chapter. The per-chunk
-# condense prompt is the one place in the pipeline where the ratio actually steers
-# the result — it is what took this book from 57% to ~36% of its input.
-#
-# 0.85 rather than the 0.82 that would centre the correction: overshooting the
-# target leaves the reader with more of their book than they asked for, while
-# undershooting silently deletes it, and those are not symmetric mistakes. This is
-# a first calibration from one book — re-derive it before treating it as settled.
-CONDENSE_ASK_FACTOR: Final = 0.85
+# *How much* to correct by is a per-model measurement and lives in
+# :mod:`breviabook.condense.calibration`. It used to be a module-level 0.85 here,
+# applied to every model — a correction for Gemini's bias handed to models that
+# do not share it, which cost a model measured in this repo a third of its
+# content. An unmeasured model is now asked for exactly the target.
 
 
 class CondensedChunk(BaseModel):
@@ -101,6 +97,10 @@ class Condenser:
         self.provider = provider
         self.model = model
         self.target_ratio = target_ratio
+        # What the prompt actually asks for: the user's target, corrected for this
+        # model's measured bias (1.0 — no correction — if it has never been measured).
+        self.ask_factor = calibration_for(model).ask_factor
+        self.asked_ratio = target_ratio * self.ask_factor
         # Models occasionally emit malformed JSON (more so with thinking disabled). Retry a
         # few times, then keep the chunk uncondensed rather than crash the whole book.
         self.max_retries = max_retries
@@ -120,7 +120,7 @@ class Condenser:
         semaphore = asyncio.Semaphore(concurrency)
 
         async def condense_one(chunk: Chunk) -> CondensedChunk:
-            source_hash = _chunk_fingerprint(chunk, self.model, self.target_ratio)
+            source_hash = _chunk_fingerprint(chunk, self.model, self.target_ratio, self.ask_factor)
             cc = self._cached_chunk(checkpoint, chunk.id, source_hash)
             if cc is not None:
                 self.reused_chunks += 1
@@ -168,7 +168,7 @@ class Condenser:
             return self._passthrough(chunk, segments)
 
         body, image_ids = _serialize(segments)
-        messages = build_condense_messages(body, self.target_ratio * CONDENSE_ASK_FACTOR, image_ids)
+        messages = build_condense_messages(body, self.asked_ratio, image_ids)
         total_runs = sum(1 for seg in segments if seg.kind == "text")
         for _attempt in range(self.max_retries):
             raw = await self.provider.generate(messages, self.model)
@@ -242,23 +242,30 @@ class Condenser:
         )
 
 
-def _chunk_fingerprint(chunk: Chunk, model: str, target_ratio: float) -> str:
-    """SHA-1 over the model, the target ratio, and the chunk's ordered block content.
+def _chunk_fingerprint(chunk: Chunk, model: str, target_ratio: float, ask_factor: float) -> str:
+    """SHA-1 over the model, the asked ratio, and the chunk's ordered block content.
 
     Any change that alters the condense output — a different model or ratio, a different
     chunking (``--chunk-tokens``), or a different book under the same input stem (chunk ids
     are positional) — changes the fingerprint, so a stale checkpoint record is recomputed
     instead of silently reused. Blocks are hashed **in order**: the sequence is semantic,
     unlike the translator's key-sorted unit batches.
+
+    ``ask_factor`` is hashed even though it is derived from ``model``: re-calibrating a
+    model in :mod:`breviabook.condense.calibration` changes what its prompt asks for
+    without changing its name, and a record from the old calibration answers the old
+    question.
     """
     fp = Fingerprint()
     # 3 when entries began addressing their source block; 4 when the prompt began
-    # asking for CONDENSE_ASK_FACTOR of the target instead of the target itself.
-    # Both changed what the model is asked, so a record written under an older tag
-    # is an answer to a different question, not a cached answer to this one.
-    fp.field("condense_block_format:4")
+    # asking for a fraction of the target instead of the target itself; 5 when that
+    # fraction became per-model. Each changed what the model is asked, so a record
+    # written under an older tag is an answer to a different question, not a cached
+    # answer to this one.
+    fp.field("condense_block_format:5")
     fp.field(model)
     fp.field(repr(target_ratio))
+    fp.field(repr(round(ask_factor, 4)))
     blocks_dump = [b.model_dump(mode="json") for b in chunk.blocks]
     fp.field(json.dumps(blocks_dump, sort_keys=True, ensure_ascii=False))
     return fp.hexdigest()

@@ -608,3 +608,74 @@ async def test_checkpoint_keys_are_namespaced_by_phase(tmp_path: Path) -> None:
     assert any(k.startswith("syn:") for k in keys)
     assert any(k.startswith("tr:") for k in keys)
     assert any(k.startswith("img:") for k in keys)
+
+
+# --------------------------------------------------------------------------- #
+# Undershoot warning — the miss that used to be silent
+# --------------------------------------------------------------------------- #
+
+
+def _prose_epub(out_dir: Path) -> Path:
+    """A book that is nothing but prose, so the ratio is set by the model and not by
+    structure the pipeline preserves verbatim.
+
+    The shipped fixture cannot serve here: at 58 tokens, mostly headings and code,
+    it lands at 72% no matter what the model replies.
+    """
+    from breviabook.ir.models import Chapter, Document, DocumentMetadata, ParagraphBlock
+    from breviabook.render.epub_renderer import EpubRenderer
+
+    filler = "The quick brown fox jumps over the lazy dog and keeps running. " * 12
+    doc = Document(
+        metadata=DocumentMetadata(title="Prose", source_format="epub"),
+        chapters=[
+            Chapter(title=f"Chapter {i}", blocks=[ParagraphBlock(text=filler) for _ in range(4)])
+            for i in range(2)
+        ],
+    )
+    return EpubRenderer().render(doc, out_dir, stem="prose")
+
+
+async def test_run_far_below_target_warns(tmp_path: Path) -> None:
+    """Removing much more than asked is a warning, not a success.
+
+    ``AdaptiveProvider`` replies with one-token stubs, so it guts the book — the
+    same shape of failure a model asked for a ratio calibrated on someone else
+    produces, and every structural metric stays clean while it happens.
+    """
+    book = _prose_epub(tmp_path / "src")
+    result = await condense_book(
+        input_path=book,
+        out_dir=tmp_path,
+        formats=["md"],
+        provider=AdaptiveProvider(),
+        model="m",
+        target_ratio=0.30,
+    )
+    assert any("more was removed than asked for" in w for w in result.warnings)
+    # It names the model as uncalibrated, because "m" is not in the table — that is
+    # the first thing to check when a run comes back short.
+    assert any("not calibrated" in w for w in result.warnings)
+
+
+async def test_undershoot_warning_respects_its_threshold(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The same gutted run stays silent once the threshold allows it.
+
+    Guards against a warning that fires on every run: healthy models land several
+    points either side of target and must not trip it.
+    """
+    from breviabook import pipeline as pl
+
+    monkeypatch.setattr(pl, "UNDERSHOOT_WARN_FACTOR", 0.0)
+    book = _prose_epub(tmp_path / "src")
+    result = await condense_book(
+        input_path=book,
+        out_dir=tmp_path,
+        formats=["md"],
+        provider=AdaptiveProvider(),
+        model="m",
+        target_ratio=0.30,
+    )
+    assert not any("more was removed than asked for" in w for w in result.warnings)
