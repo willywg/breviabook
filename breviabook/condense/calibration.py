@@ -26,6 +26,14 @@ different measurement point, taken mid-pipeline, and it does not follow from
 well above target and get trimmed back down. Keep them independent until someone
 measures both for the same model on the same run.
 
+## Nobody lands on the target
+
+Both calibrated models overshoot on a full book: Flash asks 25.5% and returns
+34%, luna asks 20.1% and returns 39%. Calibration narrows the gap, it does not
+close it, and the remaining gap is in the safe direction. Do not read an entry
+here as a promise that a run will hit ``target_ratio`` — the estimate quotes a
+range for this reason.
+
 ## Which miss is worse
 
 Overshooting leaves the reader more of their book than they asked for.
@@ -92,12 +100,15 @@ _CALIBRATIONS: Final[dict[str, ModelCalibration]] = {
         ask_factor=0.67,
         overshoot=1.30,
         note=(
-            "PROVISIONAL — 8 mixed-run chunks of Site Reliability Engineering, 4 runs: "
-            "38.1% mean against a 25.5% ask (0.30 x 0.85), band 37.1-39.4. That is a "
-            "1.49x bias, and 1/1.49 = 0.67. The bias is the tightest of any model "
-            "measured (2.3 points across 4 runs), which is what makes it worth "
-            "dividing out — but 8 chunks is not a book, and the overshoot figure is "
-            "still Gemini's. Re-derive both from a full run before pricing on them."
+            "Site Reliability Engineering, 479 pages, two full runs at different asks: "
+            "0.67 (asking 20.1%) returned 39.0%, and 0.40 (asking 12.0%) returned "
+            "34.8% — Flash's own 34.0%. Held at 0.67 anyway, because the tighter ask "
+            "buys length by dropping figures: 60 images survive at 0.67 and 44 at "
+            "0.40, against Flash's 58, with prose and section structure identical in "
+            "both. Squeezing this model shows up in the diagrams before it shows up "
+            "in the sentences, and diagrams are what this product promises to keep. "
+            "The overshoot figure is still Gemini's — nobody has measured luna's "
+            "synthesis input."
         ),
     ),
 }

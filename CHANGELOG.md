@@ -15,8 +15,12 @@ All notable changes to BreviaBook are documented here. The format follows
   not padding — whole arguments and half the figures were gone, with every
   structural metric clean. **An unmeasured model is now asked for exactly the
   target**, because a bias measured on one model is not evidence about another.
-  Gemini Flash keeps its 0.85; `openai/gpt-5.6-luna` gets a provisional 0.67 from a
-  four-run measurement, marked as such in the table.
+  Gemini Flash keeps its 0.85; `openai/gpt-5.6-luna` gets 0.67, validated on two
+  full runs of the same 479-page book. A tighter 0.40 does reach Flash's own length
+  (34.8% against 34.0%) and is **not** used: it buys that length by dropping figures
+  — 60 images survive at 0.67, 44 at 0.40, against Flash's 58 — while prose and
+  section structure stay identical. Neither model lands on the target on a full
+  book; calibration narrows the gap in the safe direction rather than closing it.
 - **A warning when a run lands far below its target.** The engine already warned
   when output came out *longer* than input; the opposite miss was silent, and it is
   the one that costs the reader content. It is measured before translation, whose
