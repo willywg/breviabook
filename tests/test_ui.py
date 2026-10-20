@@ -40,11 +40,50 @@ def test_log_reporter_forwards_phases_and_notes() -> None:
     r = LogReporter(lines.append)
     with r:
         r.phase("Condense", total=3)
-        r.advance()  # silent (no per-item spam in plain mode)
+        r.advance()
         r.note("12 chunks")
     assert "Condense (0/3) …" in lines
+    assert "Condense (1/3) …" in lines
     assert "12 chunks" in lines
     assert isinstance(r, ProgressReporter)
+
+
+def test_log_reporter_updates_counts_and_resets_for_the_next_phase() -> None:
+    lines: list[str] = []
+    with LogReporter(lines.append) as reporter:
+        reporter.phase("Condense", total=3)
+        reporter.advance(2)
+        reporter.advance()
+        reporter.phase("Synthesize", total=2)
+        reporter.advance()
+        reporter.advance()
+    assert lines == [
+        "Condense (0/3) …",
+        "Condense (2/3) …",
+        "Condense (3/3) …",
+        "Synthesize (0/2) …",
+        "Synthesize (1/2) …",
+        "Synthesize (2/2) …",
+    ]
+
+
+def test_log_reporter_counts_items_without_a_known_total() -> None:
+    lines: list[str] = []
+    with LogReporter(lines.append) as reporter:
+        reporter.phase("Prepare")
+        reporter.advance()
+        reporter.advance(2)
+    assert lines == ["Prepare …", "Prepare (1 completed) …", "Prepare (3 completed) …"]
+
+
+def test_log_reporter_ignores_advances_before_a_phase_or_without_progress() -> None:
+    lines: list[str] = []
+    reporter = LogReporter(lines.append)
+    reporter.advance()
+    reporter.phase("Render", total=1)
+    reporter.advance(0)
+    reporter.advance(-1)
+    assert lines == ["Render (0/1) …"]
 
 
 def test_run_reporter_runs_a_full_cycle_and_shows_usage() -> None:

@@ -1,0 +1,18 @@
+# Allow only the files needed to build the application.
+**
+!Dockerfile
+!.dockerignore
+!pyproject.toml
+!uv.lock
+!README.md
+!LICENSE
+!NOTICE
+!breviabook/
+!breviabook/**
+
+# Never send credentials, local caches, or bytecode to the builder.
+**/.env
+**/.env.*
+**/*.key
+**/__pycache__/
+**/*.py[cod]

@@ -13,6 +13,7 @@ checkpoints/
 .breviabook/
 output/
 out/
+input/
 
 # --- Reference repos must stay OUTSIDE the tree (ROADMAP §14) ---
 # (kept here as a guard in case someone clones them in by accident)

@@ -65,15 +65,27 @@ class LogReporter:
 
     def __init__(self, log: Callable[[str], None]) -> None:
         self._log = log
+        self._phase: str | None = None
+        self._total: int | None = None
+        self._completed = 0
 
     def note(self, message: str) -> None:
         self._log(message)
 
     def phase(self, name: str, total: int | None = None) -> None:
+        self._phase = name
+        self._total = total
+        self._completed = 0
         self._log(f"{name} …" if total is None else f"{name} (0/{total}) …")
 
     def advance(self, n: int = 1) -> None:
-        pass
+        if self._phase is None or n <= 0:
+            return
+        self._completed += n
+        if self._total is None:
+            self._log(f"{self._phase} ({self._completed} completed) …")
+        else:
+            self._log(f"{self._phase} ({self._completed}/{self._total}) …")
 
     def __enter__(self) -> LogReporter:
         return self

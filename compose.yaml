@@ -1,0 +1,36 @@
+services:
+  breviabook:
+    build: .
+    image: breviabook:local
+    init: true
+    user: "${DOCKER_UID:-10001}:${DOCKER_GID:-10001}"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    mem_limit: 4g
+    cpus: 2.0
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=256m,mode=1777
+    environment:
+      OLLAMA_ENDPOINT: ${DOCKER_OLLAMA_ENDPOINT:-http://host.docker.internal:11434}
+      DEFAULT_MODEL: ${DEFAULT_MODEL:-gemma4:e4b}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    volumes:
+      - type: bind
+        source: ./input
+        target: /input
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./output
+        target: /output
+        bind:
+          create_host_path: false

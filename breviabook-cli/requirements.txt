@@ -1,0 +1,2 @@
+# Launcher UI only; engine dependencies stay in the root pyproject.toml.
+questionary>=2.1,<3

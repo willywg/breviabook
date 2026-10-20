@@ -89,6 +89,10 @@ uv sync --extra pdf    # add PDF output
 uv run breviabook --help
 ```
 
+### Run with Docker (Windows / Linux / macOS)
+
+[Docker setup and usage](docs/docker.md).
+
 ### PDF output requirements
 
 PDF rendering uses [weasyprint](https://weasyprint.org/), which needs system libraries
